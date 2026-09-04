@@ -1,0 +1,3 @@
+<Application x:Class="V2RaySybau.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Application.Resources><ResourceDictionary><SolidColorBrush x:Key="Accent" Color="#2563EB"/></ResourceDictionary></Application.Resources>
+</Application>
