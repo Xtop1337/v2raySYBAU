@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using V2RaySybau.Core;
 using V2RaySybau.Infrastructure;
 using V2RaySybau.Models;
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<ConnectionEvent> _events = [];
     private AppSettings _settings = new();
     private bool _isLoading;
+    private bool _isConnected;
 
     public MainWindow()
     {
@@ -45,34 +47,33 @@ public partial class MainWindow : Window
     {
         _isLoading = true;
 
-        // Load settings and profiles
         _settings = await _settingsStore.LoadAsync();
         foreach (var item in await _store.LoadAsync())
             _profiles.Add(item);
 
-        // Bind UI collections
         Profiles.ItemsSource = _profiles;
         Log.ItemsSource = _events;
 
-        // Wire up core events
         _core.EventReceived += (_, ev) =>
         {
-            _events.Insert(0, ev);
-            if (_events.Count > 1000)
-                _events.RemoveAt(_events.Count - 1);
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                _events.Insert(0, ev);
+                if (_events.Count > 1000)
+                    _events.RemoveAt(_events.Count - 1);
+            });
         };
 
-        // Restore UI state
         SystemProxy.IsChecked = _settings.SystemProxy;
         Autostart.IsChecked = _settings.StartWithWindows;
         AutoConnect.IsChecked = _settings.AutoConnect;
         Theme.SelectedIndex = (int)_settings.Theme;
 
         RefreshGroups();
+        ApplyConnectionUiState(_isConnected);
 
         _isLoading = false;
 
-        // Auto-connect if enabled and a profile is selected
         if (_settings.AutoConnect && !string.IsNullOrWhiteSpace(_settings.LastSelectedProfileId))
         {
             var lastProfile = _profiles.FirstOrDefault(p => p.Id.ToString() == _settings.LastSelectedProfileId);
@@ -87,7 +88,7 @@ public partial class MainWindow : Window
 
     private async void Import_Click(object sender, RoutedEventArgs e)
     {
-        var text = Clipboard.ContainsText() ? Clipboard.GetText() : "";
+        var text = Clipboard.ContainsText() ? Clipboard.GetText() : string.Empty;
 
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -122,7 +123,6 @@ public partial class MainWindow : Window
 
             await _store.SaveAsync(_profiles);
             RefreshGroups();
-
             MessageBox.Show($"Импортировано {imported.Count} профил(ей).", "Импорт", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
@@ -180,14 +180,13 @@ public partial class MainWindow : Window
 
     private async void Connect_Click(object sender, RoutedEventArgs e)
     {
-        if (_core.IsRunning)
+        if (_core.IsRunning || _isConnected)
         {
             await DisconnectAsync();
+            return;
         }
-        else
-        {
-            await ConnectSelectedAsync();
-        }
+
+        await ConnectSelectedAsync();
     }
 
     private async Task ConnectSelectedAsync()
@@ -209,15 +208,10 @@ public partial class MainWindow : Window
             _events.Clear();
             _events.Insert(0, new ConnectionEvent(DateTimeOffset.Now, "info", $"Подключение к {profile.Name}..."));
 
-            var xrayPath = Path.Combine(AppContext.BaseDirectory, "xray.exe");
+            var xrayPath = ResolveXrayExecutablePath();
             if (!File.Exists(xrayPath))
             {
-                xrayPath = Path.Combine(AppContext.BaseDirectory, "core", "xray.exe");
-            }
-
-            if (!File.Exists(xrayPath))
-            {
-                MessageBox.Show($"xray.exe не найден. Поместите его в папку приложения или в подпапку 'core'.\n\nИскали в:\n{Path.Combine(AppContext.BaseDirectory, "xray.exe")}\n{Path.Combine(AppContext.BaseDirectory, "core", "xray.exe")}", 
+                MessageBox.Show($"xray.exe не найден. Поместите его в папку приложения или в подпапку 'core'.\n\nИскали в:\n{Path.Combine(AppContext.BaseDirectory, "xray.exe")}\n{Path.Combine(AppContext.BaseDirectory, "core", "xray.exe")}",
                     "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
@@ -225,17 +219,17 @@ public partial class MainWindow : Window
             var config = _configBuilder.Build(profile);
             await _core.StartAsync(xrayPath, config);
 
-            ConnectButton.Content = "Отключить";
-            ConnectButton.Background = System.Windows.Media.Brushes.Red;
-
-            // Save last selected profile
             _settings.LastSelectedProfileId = profile.Id.ToString();
             await _settingsStore.SaveAsync(_settings);
 
+            _isConnected = true;
+            ApplyConnectionUiState(_isConnected);
             _events.Insert(0, new ConnectionEvent(DateTimeOffset.Now, "info", $"✓ Подключено к {profile.Name}"));
         }
         catch (Exception ex)
         {
+            _isConnected = false;
+            ApplyConnectionUiState(_isConnected);
             _events.Insert(0, new ConnectionEvent(DateTimeOffset.Now, "error", $"✗ Ошибка подключения: {ex.Message}"));
             MessageBox.Show($"Ошибка при подключении:\n{ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -245,9 +239,12 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (!_core.IsRunning && !_isConnected)
+                return;
+
             await _core.StopAsync();
-            ConnectButton.Content = "Подключить";
-            ConnectButton.Background = System.Windows.Media.Brushes.Green;
+            _isConnected = false;
+            ApplyConnectionUiState(_isConnected);
             _events.Insert(0, new ConnectionEvent(DateTimeOffset.Now, "info", "Отключено"));
         }
         catch (Exception ex)
@@ -286,34 +283,43 @@ public partial class MainWindow : Window
 
         await _store.SaveAsync(_profiles);
         RefreshGroups();
-
         MessageBox.Show("Профиль сохранен.", "Успех", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
-    private void SystemProxy_Changed(object sender, RoutedEventArgs e)
+    private async void SystemProxy_Changed(object sender, RoutedEventArgs e)
     {
-        if (_isLoading) return;
+        if (_isLoading)
+            return;
+
         _settings.SystemProxy = SystemProxy.IsChecked == true;
         _windows.SetSystemProxy(_settings.SystemProxy);
+        await _settingsStore.SaveAsync(_settings);
     }
 
-    private void Autostart_Changed(object sender, RoutedEventArgs e)
+    private async void Autostart_Changed(object sender, RoutedEventArgs e)
     {
-        if (_isLoading) return;
+        if (_isLoading)
+            return;
+
         _settings.StartWithWindows = Autostart.IsChecked == true;
         _windows.SetAutostart(_settings.StartWithWindows);
+        await _settingsStore.SaveAsync(_settings);
     }
 
-    private void Theme_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void Theme_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_isLoading) return;
+        if (_isLoading)
+            return;
+
         _settings.Theme = (ThemeMode)Math.Max(0, Theme.SelectedIndex);
-        // Theme application logic can be expanded here
+        await _settingsStore.SaveAsync(_settings);
     }
 
     private void GroupFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_isLoading) return;
+        if (_isLoading)
+            return;
+
         if (GroupFilter.SelectedItem is string group && group != "Все")
         {
             Profiles.ItemsSource = new ObservableCollection<ConnectionProfile>(_profiles.Where(p => p.Group == group));
@@ -326,10 +332,10 @@ public partial class MainWindow : Window
 
     private void RefreshGroups()
     {
-        var chosen = GroupFilter.SelectedItem as string;
+        var current = GroupFilter.SelectedItem as string;
         var groups = _profiles.Select(x => x.Group).Distinct().ToList();
         GroupFilter.ItemsSource = new[] { "Все" }.Concat(groups).ToList();
-        GroupFilter.SelectedItem = chosen ?? "Все";
+        GroupFilter.SelectedItem = string.IsNullOrWhiteSpace(current) ? "Все" : current;
     }
 
     private void ClearEditor()
@@ -339,5 +345,23 @@ public partial class MainWindow : Window
         PortBox.Clear();
         UserIdBox.Clear();
         GroupBox.Clear();
+    }
+
+    private static string ResolveXrayExecutablePath()
+    {
+        var appRoot = AppContext.BaseDirectory;
+        var direct = Path.Combine(appRoot, "xray.exe");
+        if (File.Exists(direct))
+            return direct;
+
+        var nested = Path.Combine(appRoot, "core", "xray.exe");
+        return File.Exists(nested) ? nested : direct;
+    }
+
+    private void ApplyConnectionUiState(bool connected)
+    {
+        ConnectButton.Content = connected ? "Отключить" : "Подключить";
+        ConnectButton.Background = connected ? Brushes.Red : Brushes.Green;
+        ConnectButton.Foreground = Brushes.White;
     }
 }
