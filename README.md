@@ -1,21 +1,111 @@
-# V2Ray Sybau
+# V2Ray Sybau — Windows VPN Client
 
-Windows-first desktop client for VLESS/VMess profiles, backed by a compatible **Xray/V2Ray** core process. The project targets **.NET 8 + WPF** and is intentionally split into independent application layers:
+Современный клиент для V2Ray/Xray с поддержкой VLESS и VMess на Windows (WPF, .NET 8).
 
-| Layer | Location | Responsibility |
-|---|---|---|
-| UI | `UI/` | WPF shell: profile list/editor, import, group filtering, export, confirmation, connection log and client options. |
-| Profiles | `Profiles/` | VLESS and VMess URI parsing plus HTTP(S) subscription import. |
-| Settings | `Settings/` | Theme, language, autostart, auto-connect, system proxy and last profile. |
-| Network core | `Core/` | Translates a profile into Xray/V2Ray JSON and controls the core process with captured events. |
-| Storage | `Storage/` | Local JSON persistence and selected-profile export. |
-| Windows integration | `Infrastructure/` | Current-user startup registration and WinINET system proxy switching. |
+## 🚀 Функции
 
-## Running on Windows
+- **Профили**: Импорт/экспорт VLESS и VMess URI
+- **Подписки**: Загрузка профилей из URL с автоматическим обновлением
+- **Прокси**: Системный SOCKS прокси на localhost:10808
+- **Автозапуск**: Запуск с системой и автоподключение к последнему профилю
+- **Лог**: Журнал событий и ошибок в реальном времени
+- **Группы**: Фильтрация профилей по группам
+- **Темы**: Поддержка System/Light/Dark тем
 
-1. Install the [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
-2. Build with `dotnet build V2RaySybau.sln`.
-3. Put a compatible `xray.exe` (or rename a compatible V2Ray executable to `xray.exe`) in `core/xray.exe` next to the executable.
-4. Copy one or more `vless://` / `vmess://` links, or a subscription URL, to the clipboard and select **Импорт**.
+## 📋 Требования
 
-Profiles and settings are stored under `%LOCALAPPDATA%\V2RaySybau`. Export only serializes the profile selection to a user-selected JSON file. The core executable is never bundled; obtain it from its official project and comply with its license.
+- **Windows 10+** (.NET 8 Desktop Runtime)
+- **Xray/V2Ray core** — положите `xray.exe` в папку приложения или в подпапку `core/`
+
+## 🔧 Ус��ановка и запуск
+
+### Вариант 1: Из исходников
+
+```bash
+git clone https://github.com/Xtop1337/v2raySYBAU.git
+cd v2raySYBAU
+dotnet build V2RaySybau.sln
+dotnet run --project src/V2RaySybau/V2RaySybau.csproj
+```
+
+### Вариант 2: Release сборка
+
+```bash
+dotnet publish -c Release -r win-x64 --self-contained false -o bin/Release/
+```
+
+Готовый exe будет в `bin/Release/V2RaySybau.exe`
+
+### Вариант 3: Скачать готовый exe
+
+[Скачать последний релиз](https://github.com/Xtop1337/v2raySYBAU/releases)
+
+## 📝 Первый запуск
+
+1. Скопируйте `xray.exe` (из [xray-core](https://github.com/XTLS/Xray-core/releases)) в папку приложения
+2. Откройте приложение
+3. Нажмите **Импорт** и вставьте:
+   - `vless://...` или `vmess://...` ссылку
+   - или URL подписки
+4. Выберите профиль и нажмите **Подключить**
+5. Трафик будет проходить через прокси на `127.0.0.1:10808`
+
+## 🔌 Системный прокси
+
+Отметьте "Системный прокси" чтобы автоматически переправлять весь трафик браузера через V2Ray.
+
+## 🚀 Автозапуск
+
+Включите "Запуск с системой" и отметьте "Автоподключение" чтобы приложение:
+- Запускалось при входе в Windows
+- Автоматически подключалось к последнему использованному профилю
+
+## 🏗️ Архитектура
+
+```
+src/V2RaySybau/
+├── UI/                          # WPF интерфейс
+│   ├── MainWindow.xaml         # Главное окно
+│   └── MainWindow.xaml.cs      # Логика подключения
+├── Core/                        # Ядро V2Ray
+│   ├── CoreProcessService.cs   # Запуск/остановка xray
+│   └── XrayConfigAdapter.cs    # Генерация конфига
+├── Models/                      # Модели данных
+│   └── ConnectionProfile.cs    # Профиль подключения
+├── Profiles/                    # Парсинг профилей
+│   └── ProfileImportService.cs # Импорт VLESS/VMess
+├── Settings/                    # Настройки приложения
+│   ├── AppSettings.cs          # Класс настроек
+│   └── SettingsService.cs      # Сохранение/загрузка
+├── Storage/                     # Хранилище профилей
+│   └── ProfileStore.cs         # JSON хранилище
+└── Infrastructure/              # Windows интеграция
+    └── WindowsIntegrationService.cs # Прокси и автозапуск
+```
+
+## 📦 Техстек
+
+- **Framework**: .NET 8.0 (Windows)
+- **UI**: WPF (XAML + C#)
+- **JSON**: System.Text.Json
+- **Сеть**: HttpClient, System.Diagnostics
+- **Windows API**: Registry, WinINET
+
+## 🐛 Известные ограничения
+
+- Требует .NET 8 Desktop Runtime на целевой машине
+- Поддерживает только VLESS и VMess (Shadowsocks, Trojan требуют расширения)
+- Системный прокси работает только на уровне браузера (не на уровне системы)
+- Xray/V2Ray core должен быть загружен отдельно
+
+## 📄 Лицензия
+
+MIT License — см. [LICENSE](LICENSE)
+
+## 🤝 Contributing
+
+Приветствуются Pull Request'ы! Для больших изменений сначала откройте Issue.
+
+---
+
+**Использование на свой риск**. Убедитесь, что вы имеете право использовать V2Ray/Xray в вашей стране/регионе.
