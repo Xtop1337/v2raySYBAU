@@ -39,18 +39,22 @@ pub fn build_client(profile: &Profile, settings: &Settings, env: &ConfigEnv, pro
     let mut proxy = outbound(profile, settings);
     proxy["tag"] = json!(PROXY_TAG);
     let mut outbounds = vec![proxy];
-    outbounds.push(json!({"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIP"}}));
+    // `sockopt.domainStrategy` replaces the deprecated `freedom.domainStrategy` (Xray 26.10+).
+    outbounds.push(json!({
+        "tag": "direct", "protocol": "freedom", "settings": {},
+        "streamSettings": {"sockopt": {"domainStrategy": "UseIP"}}
+    }));
     outbounds.push(json!({"tag": "block", "protocol": "blackhole", "settings": {"response": {"type": "http"}}}));
     outbounds.push(json!({"tag": "dns-out", "protocol": "dns"}));
     if settings.fragment.enabled {
         outbounds.push(json!({
             "tag": "fragment", "protocol": "freedom",
-            "settings": {"domainStrategy": "UseIP", "fragment": {
+            "settings": {"fragment": {
                 "packets": settings.fragment.packets,
                 "length": settings.fragment.length,
                 "interval": settings.fragment.interval
             }},
-            "streamSettings": {"sockopt": {"tcpNoDelay": true}}
+            "streamSettings": {"sockopt": {"tcpNoDelay": true, "domainStrategy": "UseIP"}}
         }));
     }
 

@@ -53,7 +53,8 @@ async fn batch_test_connect_and_traffic() {
             {"listen": "127.0.0.1", "port": vmess_port, "protocol": "vmess", "settings": {"clients": [{"id": UUID}]}},
             {"listen": "127.0.0.1", "port": ss_port, "protocol": "shadowsocks", "settings": {"method": "aes-128-gcm", "password": "secret", "network": "tcp,udp"}}
         ],
-        "outbounds": [{"protocol": "freedom"}]
+        // Xray 26.10+ blocks private targets for VLESS/VMess/SS inbounds unless allowed.
+        "outbounds": [{"protocol": "freedom", "settings": {"finalRules": [{"action": "allow", "ip": ["127.0.0.0/8"]}]}}]
     });
     let server_file = work.path().join("server.json");
     std::fs::write(&server_file, server.to_string()).unwrap();
