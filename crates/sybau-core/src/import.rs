@@ -104,11 +104,7 @@ fn import_json(value: &Value, result: &mut ImportResult) {
     let config_name = value.get("remarks").and_then(Value::as_str).unwrap_or_default();
     let dns = first_dns_server(value);
     for outbound in outbounds {
-        let profile = if outbound.get("type").is_some() {
-            singbox_outbound(outbound)
-        } else {
-            xray_outbound(outbound)
-        };
+        let profile = if outbound.get("type").is_some() { singbox_outbound(outbound) } else { xray_outbound(outbound) };
         if let Some(mut profile) = profile {
             if profile.name.is_empty() {
                 profile.name = config_name.to_string();
@@ -127,11 +123,7 @@ fn first_dns_server(config: &Value) -> String {
         .and_then(|servers| servers.first())
         .and_then(|server| match server {
             Value::String(s) => Some(s.clone()),
-            other => other
-                .get("address")
-                .or_else(|| other.get("server"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            other => other.get("address").or_else(|| other.get("server")).and_then(Value::as_str).map(str::to_string),
         })
         .unwrap_or_default()
 }
@@ -152,20 +144,13 @@ fn xray_outbound(outbound: &Value) -> Option<Profile> {
         "shadowsocks" => Protocol::Shadowsocks,
         _ => return None,
     };
-    let mut p = Profile {
-        protocol,
-        name: s(outbound, "/tag"),
-        ..Profile::default()
-    };
+    let mut p = Profile { protocol, name: s(outbound, "/tag"), ..Profile::default() };
     if p.name == "proxy" {
         p.name.clear();
     }
     let settings = outbound.get("settings")?;
     // Both the classic `vnext`/`servers` layout and the flat Xray 25+ layout are accepted.
-    let server = settings
-        .pointer("/vnext/0")
-        .or_else(|| settings.pointer("/servers/0"))
-        .unwrap_or(settings);
+    let server = settings.pointer("/vnext/0").or_else(|| settings.pointer("/servers/0")).unwrap_or(settings);
     p.address = s(server, "/address");
     p.port = s(server, "/port").parse().ok()?;
     let user = server.pointer("/users/0").unwrap_or(server);
@@ -187,11 +172,7 @@ fn xray_outbound(outbound: &Value) -> Option<Profile> {
     let stream = outbound.get("streamSettings").cloned().unwrap_or(Value::Null);
     p.transport.network = Network::parse(&s(&stream, "/network"));
     p.tls.security = Security::parse(&s(&stream, "/security"));
-    let tls = stream
-        .get("realitySettings")
-        .or_else(|| stream.get("tlsSettings"))
-        .cloned()
-        .unwrap_or(Value::Null);
+    let tls = stream.get("realitySettings").or_else(|| stream.get("tlsSettings")).cloned().unwrap_or(Value::Null);
     p.tls.sni = s(&tls, "/serverName");
     p.tls.fingerprint = s(&tls, "/fingerprint");
     p.tls.public_key = s(&tls, "/publicKey");

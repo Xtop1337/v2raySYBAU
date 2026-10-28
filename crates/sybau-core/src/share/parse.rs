@@ -20,17 +20,12 @@ type Result<T> = std::result::Result<T, ParseError>;
 
 pub fn is_share_link(line: &str) -> bool {
     let lower = line.trim().to_ascii_lowercase();
-    ["vless://", "vmess://", "trojan://", "ss://", "hysteria2://", "hy2://", "tuic://"]
-        .iter()
-        .any(|scheme| lower.starts_with(scheme))
+    ["vless://", "vmess://", "trojan://", "ss://", "hysteria2://", "hy2://", "tuic://"].iter().any(|scheme| lower.starts_with(scheme))
 }
 
 pub fn parse_link(line: &str) -> Result<Profile> {
     let line = line.trim();
-    let scheme = line
-        .split_once("://")
-        .map(|(scheme, _)| scheme.to_ascii_lowercase())
-        .ok_or(ParseError::UnsupportedScheme)?;
+    let scheme = line.split_once("://").map(|(scheme, _)| scheme.to_ascii_lowercase()).ok_or(ParseError::UnsupportedScheme)?;
     match scheme.as_str() {
         "vless" => parse_standard(line, Protocol::Vless),
         "vmess" => parse_vmess(line),
@@ -53,9 +48,7 @@ struct LinkParts {
 }
 
 fn split_link(line: &str) -> Result<LinkParts> {
-    let (_, rest) = line
-        .split_once("://")
-        .ok_or_else(|| ParseError::Malformed("missing scheme".into()))?;
+    let (_, rest) = line.split_once("://").ok_or_else(|| ParseError::Malformed("missing scheme".into()))?;
     let (rest, fragment) = match rest.split_once('#') {
         Some((rest, fragment)) => (rest, percent_decode(fragment)),
         None => (rest, String::new()),
@@ -75,20 +68,12 @@ fn split_link(line: &str) -> Result<LinkParts> {
         None => (String::new(), authority),
     };
     let (host, port) = split_host_port(host_port)?;
-    Ok(LinkParts {
-        user,
-        host,
-        port,
-        query,
-        name: fragment.trim().to_string(),
-    })
+    Ok(LinkParts { user, host, port, query, name: fragment.trim().to_string() })
 }
 
 fn split_host_port(value: &str) -> Result<(String, u16)> {
     let (host, port) = if let Some(stripped) = value.strip_prefix('[') {
-        let (host, rest) = stripped
-            .split_once(']')
-            .ok_or_else(|| ParseError::Malformed("bad IPv6 address".into()))?;
+        let (host, rest) = stripped.split_once(']').ok_or_else(|| ParseError::Malformed("bad IPv6 address".into()))?;
         (host.to_string(), rest.trim_start_matches(':'))
     } else {
         match value.rsplit_once(':') {
@@ -101,13 +86,8 @@ fn split_host_port(value: &str) -> Result<(String, u16)> {
     }
     // Hysteria2 port hopping links may carry `443,20000-30000`; the first port is the main one.
     let first = port.split([',', '-']).next().unwrap_or("");
-    let port = if first.is_empty() {
-        443
-    } else {
-        first
-            .parse::<u16>()
-            .map_err(|_| ParseError::Malformed(format!("bad port `{port}`")))?
-    };
+    let port =
+        if first.is_empty() { 443 } else { first.parse::<u16>().map_err(|_| ParseError::Malformed(format!("bad port `{port}`")))? };
     Ok((percent_decode(&host), port))
 }
 
@@ -116,20 +96,14 @@ fn parse_query(query: &str) -> HashMap<String, String> {
         .split('&')
         .filter(|pair| !pair.is_empty())
         .map(|pair| match pair.split_once('=') {
-            Some((key, value)) => (
-                percent_decode(key),
-                percent_decode(&value.replace('+', "%20")),
-            ),
+            Some((key, value)) => (percent_decode(key), percent_decode(&value.replace('+', "%20"))),
             None => (percent_decode(pair), String::new()),
         })
         .collect()
 }
 
 fn get<'a>(query: &'a HashMap<String, String>, keys: &[&str]) -> &'a str {
-    keys.iter()
-        .find_map(|key| query.get(*key).filter(|v| !v.is_empty()))
-        .map(String::as_str)
-        .unwrap_or("")
+    keys.iter().find_map(|key| query.get(*key).filter(|v| !v.is_empty())).map(String::as_str).unwrap_or("")
 }
 
 fn truthy(value: &str) -> bool {
@@ -176,13 +150,7 @@ fn parse_standard(line: &str, protocol: Protocol) -> Result<Profile> {
     if parts.user.is_empty() {
         return Err(ParseError::Malformed("missing user id".into()));
     }
-    let mut profile = Profile {
-        protocol,
-        name: parts.name,
-        address: parts.host,
-        port: parts.port,
-        ..Profile::default()
-    };
+    let mut profile = Profile { protocol, name: parts.name, address: parts.host, port: parts.port, ..Profile::default() };
     match protocol {
         Protocol::Trojan => {
             profile.password = parts.user;
@@ -216,8 +184,7 @@ fn parse_vmess(line: &str) -> Result<Profile> {
         }
         return Ok(profile);
     };
-    let root: Value = serde_json::from_str(&json)
-        .map_err(|e| ParseError::Malformed(format!("vmess json: {e}")))?;
+    let root: Value = serde_json::from_str(&json).map_err(|e| ParseError::Malformed(format!("vmess json: {e}")))?;
     let read = |key: &str| -> String {
         match root.get(key) {
             Some(Value::String(s)) => s.trim().to_string(),
@@ -283,23 +250,17 @@ fn parse_shadowsocks(line: &str) -> Result<Profile> {
     let full = if body.contains('@') {
         body
     } else {
-        decoded_whole =
-            b64_decode_str(body).ok_or_else(|| ParseError::Malformed("bad ss base64".into()))?;
+        decoded_whole = b64_decode_str(body).ok_or_else(|| ParseError::Malformed("bad ss base64".into()))?;
         decoded_whole.as_str()
     };
-    let at = full
-        .rfind('@')
-        .ok_or_else(|| ParseError::Malformed("ss without host".into()))?;
+    let at = full.rfind('@').ok_or_else(|| ParseError::Malformed("ss without host".into()))?;
     let (userinfo, host_port) = (&full[..at], &full[at + 1..]);
     let userinfo = if userinfo.contains(':') {
         percent_decode(userinfo)
     } else {
-        b64_decode_str(&percent_decode(userinfo))
-            .ok_or_else(|| ParseError::Malformed("bad ss userinfo".into()))?
+        b64_decode_str(&percent_decode(userinfo)).ok_or_else(|| ParseError::Malformed("bad ss userinfo".into()))?
     };
-    let (method, password) = userinfo
-        .split_once(':')
-        .ok_or_else(|| ParseError::Malformed("ss userinfo without password".into()))?;
+    let (method, password) = userinfo.split_once(':').ok_or_else(|| ParseError::Malformed("ss userinfo without password".into()))?;
     let (host, port) = split_host_port(host_port)?;
     Ok(Profile {
         protocol: Protocol::Shadowsocks,
@@ -343,15 +304,8 @@ fn parse_tuic(line: &str) -> Result<Profile> {
         Some((uuid, password)) => (uuid.to_string(), password.to_string()),
         None => (parts.user.clone(), get(query, &["password"]).to_string()),
     };
-    let mut profile = Profile {
-        protocol: Protocol::Tuic,
-        name: parts.name,
-        address: parts.host,
-        port: parts.port,
-        uuid,
-        password,
-        ..Profile::default()
-    };
+    let mut profile =
+        Profile { protocol: Protocol::Tuic, name: parts.name, address: parts.host, port: parts.port, uuid, password, ..Profile::default() };
     profile.tls.security = Security::Tls;
     profile.tls.sni = get(query, &["sni"]).to_string();
     profile.tls.alpn = split_list(get(query, &["alpn"]));

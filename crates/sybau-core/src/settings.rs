@@ -127,13 +127,7 @@ pub struct TunSettings {
 
 impl Default for TunSettings {
     fn default() -> Self {
-        TunSettings {
-            app_mode: TunAppMode::All,
-            apps: Vec::new(),
-            stack: "mixed".into(),
-            mtu: 9000,
-            strict_route: true,
-        }
+        TunSettings { app_mode: TunAppMode::All, apps: Vec::new(), stack: "mixed".into(), mtu: 9000, strict_route: true }
     }
 }
 
@@ -225,12 +219,7 @@ pub struct MuxSettings {
 
 impl Default for MuxSettings {
     fn default() -> Self {
-        MuxSettings {
-            enabled: false,
-            concurrency: 8,
-            xudp_concurrency: 16,
-            xudp_proxy_udp443: "reject".into(),
-        }
+        MuxSettings { enabled: false, concurrency: 8, xudp_concurrency: 16, xudp_proxy_udp443: "reject".into() }
     }
 }
 
@@ -246,12 +235,7 @@ pub struct FragmentSettings {
 
 impl Default for FragmentSettings {
     fn default() -> Self {
-        FragmentSettings {
-            enabled: false,
-            packets: "tlshello".into(),
-            length: "100-200".into(),
-            interval: "10-20".into(),
-        }
+        FragmentSettings { enabled: false, packets: "tlshello".into(), length: "100-200".into(), interval: "10-20".into() }
     }
 }
 
@@ -281,13 +265,7 @@ pub struct AnalysisSettings {
 
 impl Default for AnalysisSettings {
     fn default() -> Self {
-        AnalysisSettings {
-            enabled: true,
-            interval_secs: 5,
-            window: 30,
-            method: TestMethod::Tcp,
-            scope: MonitorScope::Active,
-        }
+        AnalysisSettings { enabled: true, interval_secs: 5, window: 30, method: TestMethod::Tcp, scope: MonitorScope::Active }
     }
 }
 
@@ -302,12 +280,7 @@ pub struct TestSettings {
 
 impl Default for TestSettings {
     fn default() -> Self {
-        TestSettings {
-            url: "https://www.gstatic.com/generate_204".into(),
-            timeout_ms: 5000,
-            concurrency: 16,
-            method: TestMethod::Real,
-        }
+        TestSettings { url: "https://www.gstatic.com/generate_204".into(), timeout_ms: 5000, concurrency: 16, method: TestMethod::Real }
     }
 }
 

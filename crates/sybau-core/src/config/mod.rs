@@ -25,11 +25,7 @@ pub struct ConfigEnv {
 
 impl Default for ConfigEnv {
     fn default() -> Self {
-        ConfigEnv {
-            geo_available: true,
-            core_process_names: vec!["xray.exe".into(), "sing-box.exe".into()],
-            clash_api_port: 10814,
-        }
+        ConfigEnv { geo_available: true, core_process_names: vec!["xray.exe".into(), "sing-box.exe".into()], clash_api_port: 10814 }
     }
 }
 
@@ -43,22 +39,17 @@ pub struct LaunchPlan {
 pub fn plan(profile: &Profile, settings: &Settings, env: &ConfigEnv) -> LaunchPlan {
     let native_singbox = profile.protocol.needs_singbox();
     match (settings.proxy.mode, native_singbox) {
-        (ConnectionMode::Proxy, false) => LaunchPlan {
-            xray: Some(xray::build_client(profile, settings, env, true)),
-            singbox: None,
-        },
-        (ConnectionMode::Proxy, true) => LaunchPlan {
-            xray: None,
-            singbox: Some(singbox::build(profile, settings, env, singbox::Mode::Proxy)),
-        },
+        (ConnectionMode::Proxy, false) => LaunchPlan { xray: Some(xray::build_client(profile, settings, env, true)), singbox: None },
+        (ConnectionMode::Proxy, true) => {
+            LaunchPlan { xray: None, singbox: Some(singbox::build(profile, settings, env, singbox::Mode::Proxy)) }
+        }
         (ConnectionMode::Tun, false) => LaunchPlan {
             xray: Some(xray::build_client(profile, settings, env, false)),
             singbox: Some(singbox::build(profile, settings, env, singbox::Mode::TunOverXray)),
         },
-        (ConnectionMode::Tun, true) => LaunchPlan {
-            xray: None,
-            singbox: Some(singbox::build(profile, settings, env, singbox::Mode::TunNative)),
-        },
+        (ConnectionMode::Tun, true) => {
+            LaunchPlan { xray: None, singbox: Some(singbox::build(profile, settings, env, singbox::Mode::TunNative)) }
+        }
     }
 }
 

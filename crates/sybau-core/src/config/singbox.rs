@@ -98,11 +98,7 @@ pub fn dns_server(spec: &str, tag: &str) -> Value {
     let (scheme, rest) = spec.split_once("://").unwrap_or(("udp", spec));
     let host = dns_host(spec);
     let after_host = rest.split_once('/').map(|(_, path)| format!("/{path}"));
-    let port = rest
-        .split('/')
-        .next()
-        .and_then(|authority| authority.rsplit_once(':'))
-        .and_then(|(_, port)| port.parse::<u16>().ok());
+    let port = rest.split('/').next().and_then(|authority| authority.rsplit_once(':')).and_then(|(_, port)| port.parse::<u16>().ok());
     let kind = match scheme.to_ascii_lowercase().as_str() {
         "https" => "https",
         "h3" => "h3",
@@ -292,13 +288,8 @@ pub fn outbound(profile: &Profile, settings: &Settings) -> Value {
             if !q.obfs.is_empty() {
                 out["obfs"] = json!({"type": q.obfs, "password": q.obfs_password});
             }
-            let hops: Vec<String> = q
-                .hop_ports
-                .split(',')
-                .map(str::trim)
-                .filter(|p| p.contains('-'))
-                .map(|p| p.replace('-', ":"))
-                .collect();
+            let hops: Vec<String> =
+                q.hop_ports.split(',').map(str::trim).filter(|p| p.contains('-')).map(|p| p.replace('-', ":")).collect();
             if !hops.is_empty() {
                 out["server_ports"] = json!(hops);
             }
@@ -340,7 +331,8 @@ pub fn outbound(profile: &Profile, settings: &Settings) -> Value {
                 if tls.security == crate::model::Security::Reality {
                     tls_value["reality"] = json!({"enabled": true, "public_key": tls.public_key, "short_id": tls.short_id});
                 }
-                tls_value["utls"] = json!({"enabled": true, "fingerprint": if tls.fingerprint.is_empty() { "chrome" } else { tls.fingerprint.as_str() }});
+                tls_value["utls"] =
+                    json!({"enabled": true, "fingerprint": if tls.fingerprint.is_empty() { "chrome" } else { tls.fingerprint.as_str() }});
                 out["tls"] = tls_value;
             }
             out

@@ -61,7 +61,12 @@ fn variants() -> Vec<(String, Settings)> {
     all.routing.preset = RoutingPreset::BypassLanRu;
     all.routing.route_only = true;
     all.routing.rules = vec![
-        RoutingRule { kind: RuleKind::Domain, values: vec!["domain:example.org".into(), "full:a.b.c".into(), "keyword:ads".into()], outbound: RuleOutbound::Block, ..Default::default() },
+        RoutingRule {
+            kind: RuleKind::Domain,
+            values: vec!["domain:example.org".into(), "full:a.b.c".into(), "keyword:ads".into()],
+            outbound: RuleOutbound::Block,
+            ..Default::default()
+        },
         RoutingRule { kind: RuleKind::Ip, values: vec!["8.8.4.4/32".into()], outbound: RuleOutbound::Direct, ..Default::default() },
         RoutingRule { kind: RuleKind::Port, values: vec!["6881-6889,51413".into()], outbound: RuleOutbound::Direct, ..Default::default() },
         RoutingRule { kind: RuleKind::Protocol, values: vec!["bittorrent".into()], outbound: RuleOutbound::Direct, ..Default::default() },

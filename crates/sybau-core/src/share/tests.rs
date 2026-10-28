@@ -85,7 +85,9 @@ fn parses_shadowsocks_variants() {
 
 #[test]
 fn parses_hysteria2_and_tuic() {
-    let hy = parse_link("hy2://secret@hy.example.com:443/?sni=hy.example.com&obfs=salamander&obfs-password=ob&insecure=1&mport=20000-30000#HY2").unwrap();
+    let hy =
+        parse_link("hy2://secret@hy.example.com:443/?sni=hy.example.com&obfs=salamander&obfs-password=ob&insecure=1&mport=20000-30000#HY2")
+            .unwrap();
     assert_eq!(hy.protocol, Protocol::Hysteria2);
     assert_eq!(hy.password, "secret");
     assert_eq!(hy.quic.obfs, "salamander");
@@ -122,7 +124,16 @@ fn links_round_trip() {
         let rebuilt = parse_link(&build_link(&parsed)).unwrap();
         assert_eq!(
             (parsed.protocol, &parsed.address, parsed.port, &parsed.uuid, &parsed.password, &parsed.transport, &parsed.tls, &parsed.name),
-            (rebuilt.protocol, &rebuilt.address, rebuilt.port, &rebuilt.uuid, &rebuilt.password, &rebuilt.transport, &rebuilt.tls, &rebuilt.name),
+            (
+                rebuilt.protocol,
+                &rebuilt.address,
+                rebuilt.port,
+                &rebuilt.uuid,
+                &rebuilt.password,
+                &rebuilt.transport,
+                &rebuilt.tls,
+                &rebuilt.name
+            ),
             "round trip of {link}"
         );
     }

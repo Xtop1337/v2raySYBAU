@@ -59,7 +59,7 @@ pub fn build_client(profile: &Profile, settings: &Settings, env: &ConfigEnv, pro
         "dns": dns(profile, settings, env, fake_dns),
         "inbounds": inbounds,
         "outbounds": outbounds,
-        "routing": routing(profile, settings, env),
+        "routing": routing(settings, env),
         "api": {"tag": "api", "listen": format!("127.0.0.1:{}", settings.advanced.api_port), "services": ["StatsService"]},
         "stats": {},
         "policy": {"system": {"statsOutboundUplink": true, "statsOutboundDownlink": true}}
@@ -162,7 +162,7 @@ fn dns(profile: &Profile, settings: &Settings, env: &ConfigEnv, fake_dns: bool) 
     })
 }
 
-fn routing(profile: &Profile, settings: &Settings, env: &ConfigEnv) -> Value {
+fn routing(settings: &Settings, env: &ConfigEnv) -> Value {
     let mut rules = Vec::new();
     if settings.dns.local_dns {
         rules.push(json!({"type": "field", "inboundTag": ["dns-in"], "outboundTag": "dns-out"}));
@@ -171,9 +171,6 @@ fn routing(profile: &Profile, settings: &Settings, env: &ConfigEnv) -> Value {
     let direct_dns = dns_host(&settings.dns.direct);
     if is_ip(&direct_dns) {
         rules.push(json!({"type": "field", "ip": [direct_dns], "port": "53", "outboundTag": "direct"}));
-    }
-    if is_ip(&profile.address) {
-        rules.push(json!({"type": "field", "ip": [profile.address], "outboundTag": "direct"}));
     }
 
     for rule in settings.routing.rules.iter().filter(|r| r.enabled && !r.values.is_empty()) {
@@ -289,9 +286,7 @@ fn stream_settings(profile: &Profile, settings: &Settings) -> Value {
             }}});
         }
         Network::Ws => stream["wsSettings"] = json!({"path": non_empty(&t.path, "/"), "host": host_or_sni()}),
-        Network::HttpUpgrade => {
-            stream["httpupgradeSettings"] = json!({"path": non_empty(&t.path, "/"), "host": host_or_sni()})
-        }
+        Network::HttpUpgrade => stream["httpupgradeSettings"] = json!({"path": non_empty(&t.path, "/"), "host": host_or_sni()}),
         Network::Grpc => {
             stream["grpcSettings"] = json!({
                 "serviceName": t.service_name, "multiMode": t.mode == "multi", "authority": t.host

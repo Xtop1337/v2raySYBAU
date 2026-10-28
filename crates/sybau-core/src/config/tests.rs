@@ -10,12 +10,7 @@ fn reality() -> Profile {
 }
 
 fn find<'a>(items: &'a Value, key: &str, value: &str) -> &'a Value {
-    items
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|item| item[key] == value)
-        .unwrap_or_else(|| panic!("no item with {key}={value}"))
+    items.as_array().unwrap().iter().find(|item| item[key] == value).unwrap_or_else(|| panic!("no item with {key}={value}"))
 }
 
 #[test]
@@ -132,7 +127,10 @@ fn hysteria2_uses_singbox_natively() {
 
 #[test]
 fn singbox_dns_server_specs() {
-    assert_eq!(singbox::dns_server("https://1.1.1.1/dns-query", "r"), serde_json::json!({"type": "https", "tag": "r", "server": "1.1.1.1"}));
+    assert_eq!(
+        singbox::dns_server("https://1.1.1.1/dns-query", "r"),
+        serde_json::json!({"type": "https", "tag": "r", "server": "1.1.1.1"})
+    );
     assert_eq!(singbox::dns_server("8.8.8.8", "l"), serde_json::json!({"type": "udp", "tag": "l", "server": "8.8.8.8"}));
     let tls = singbox::dns_server("tls://dns.google:853", "t");
     assert_eq!(tls["server"], "dns.google");

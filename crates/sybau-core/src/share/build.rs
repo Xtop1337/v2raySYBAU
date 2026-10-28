@@ -51,10 +51,7 @@ fn standard_link(scheme: &str, user: &str, profile: &Profile, include_encryption
     let tls = &profile.tls;
     let mut pairs: Vec<(&str, String)> = Vec::new();
     if include_encryption {
-        pairs.push((
-            "encryption",
-            if profile.method.is_empty() { "none".into() } else { profile.method.clone() },
-        ));
+        pairs.push(("encryption", if profile.method.is_empty() { "none".into() } else { profile.method.clone() }));
     }
     pairs.extend([
         ("type", t.network.as_str().to_string()),
@@ -75,13 +72,7 @@ fn standard_link(scheme: &str, user: &str, profile: &Profile, include_encryption
         ("seed", t.seed.clone()),
         ("allowInsecure", if tls.allow_insecure { "1".into() } else { String::new() }),
     ]);
-    format!(
-        "{scheme}://{}@{}{}{}",
-        percent_encode(user),
-        host_port(profile),
-        query_string(&pairs),
-        fragment(profile)
-    )
+    format!("{scheme}://{}@{}{}{}", percent_encode(user), host_port(profile), query_string(&pairs), fragment(profile))
 }
 
 fn vmess_link(profile: &Profile) -> String {
@@ -129,13 +120,7 @@ fn hysteria2_link(profile: &Profile) -> String {
         ("obfs-password", q.obfs_password.clone()),
         ("mport", q.hop_ports.clone()),
     ];
-    format!(
-        "hysteria2://{}@{}/{}{}",
-        percent_encode(&profile.password),
-        host_port(profile),
-        query_string(&pairs),
-        fragment(profile)
-    )
+    format!("hysteria2://{}@{}/{}{}", percent_encode(&profile.password), host_port(profile), query_string(&pairs), fragment(profile))
 }
 
 fn tuic_link(profile: &Profile) -> String {

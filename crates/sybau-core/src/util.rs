@@ -2,9 +2,8 @@ use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use base64::Engine;
 
-const LENIENT: GeneralPurposeConfig = GeneralPurposeConfig::new()
-    .with_decode_padding_mode(DecodePaddingMode::Indifferent)
-    .with_decode_allow_trailing_bits(true);
+const LENIENT: GeneralPurposeConfig =
+    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent).with_decode_allow_trailing_bits(true);
 const STANDARD_LENIENT: GeneralPurpose = GeneralPurpose::new(&alphabet::STANDARD, LENIENT);
 
 /// Decodes standard or URL-safe base64 with or without padding, ignoring whitespace.
@@ -37,17 +36,11 @@ pub fn b64_encode_url(input: &[u8]) -> String {
 }
 
 pub fn percent_decode(value: &str) -> String {
-    percent_encoding::percent_decode_str(value)
-        .decode_utf8_lossy()
-        .into_owned()
+    percent_encoding::percent_decode_str(value).decode_utf8_lossy().into_owned()
 }
 
 /// Characters that must be escaped inside a query value or fragment of a share link.
-const COMPONENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'_')
-    .remove(b'.')
-    .remove(b'~');
+const COMPONENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
 
 pub fn percent_encode(value: &str) -> String {
     percent_encoding::utf8_percent_encode(value, COMPONENT).to_string()
@@ -58,10 +51,7 @@ pub fn merge_json(target: &mut serde_json::Value, patch: &serde_json::Value) {
     match (target, patch) {
         (serde_json::Value::Object(target), serde_json::Value::Object(patch)) => {
             for (key, value) in patch {
-                merge_json(
-                    target.entry(key.clone()).or_insert(serde_json::Value::Null),
-                    value,
-                );
+                merge_json(target.entry(key.clone()).or_insert(serde_json::Value::Null), value);
             }
         }
         (target, patch) => *target = patch.clone(),
@@ -69,12 +59,7 @@ pub fn merge_json(target: &mut serde_json::Value, patch: &serde_json::Value) {
 }
 
 pub fn split_list(value: &str) -> Vec<String> {
-    value
-        .split([',', '\n', ';'])
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect()
+    value.split([',', '\n', ';']).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
 }
 
 #[cfg(test)]
@@ -94,13 +79,7 @@ mod tests {
     #[test]
     fn merges_json() {
         let mut a = serde_json::json!({"log": {"loglevel": "warning", "access": "a"}, "x": 1});
-        merge_json(
-            &mut a,
-            &serde_json::json!({"log": {"loglevel": "debug"}, "x": [1]}),
-        );
-        assert_eq!(
-            a,
-            serde_json::json!({"log": {"loglevel": "debug", "access": "a"}, "x": [1]})
-        );
+        merge_json(&mut a, &serde_json::json!({"log": {"loglevel": "debug"}, "x": [1]}));
+        assert_eq!(a, serde_json::json!({"log": {"loglevel": "debug", "access": "a"}, "x": [1]}));
     }
 }
