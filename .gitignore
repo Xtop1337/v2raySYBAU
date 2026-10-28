@@ -1,6 +1,6 @@
 /target
 node_modules/
-/ui/dist/
+/dist/
 /src-tauri/gen/
 /src-tauri/resources/cores/*
 !/src-tauri/resources/cores/.gitkeep
