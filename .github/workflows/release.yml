@@ -1,0 +1,61 @@
+name: Release
+
+# Push a tag like v1.0.1 to publish a GitHub release with the NSIS installer and the
+# latest.json manifest read by the built-in updater.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Version from tag
+        shell: pwsh
+        run: ./scripts/set-version.ps1 '${{ github.ref_name }}'
+      - name: Fetch latest cores
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/fetch-cores.ps1
+      - name: Updater signing
+        id: signing
+        shell: pwsh
+        run: |
+          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+            "args=--bundles nsis" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Warning 'TAURI_SIGNING_PRIVATE_KEY secret is not set: the release is built without updater signatures.'
+            "args=--bundles nsis --config src-tauri/tauri.no-updater.conf.json" >> $env:GITHUB_OUTPUT
+          }
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: V2Ray Sybau ${{ github.ref_name }}
+          releaseBody: |
+            Установщик для Windows 10/11 (x64): скачайте `*-setup.exe` и запустите.
+            В комплекте последние Xray-core, sing-box и geoip/geosite.
+            Уже установленное приложение обновится само (О программе → Проверить обновления).
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          includeUpdaterJson: true
+          args: ${{ steps.signing.outputs.args }}

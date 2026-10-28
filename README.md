@@ -1,21 +1,96 @@
 # V2Ray Sybau
 
-Windows-first desktop client for VLESS/VMess profiles, backed by a compatible **Xray/V2Ray** core process. The project targets **.NET 8 + WPF** and is intentionally split into independent application layers:
+Клиент для Windows 10/11 в духе v2rayNG и Happ: вставляете ключ или ссылку подписки — появляются серверы, проверяете пинг, подключаетесь.
+Логика написана на **Rust** (Tauri 2), интерфейс — на Svelte. Трафик шифруют ядра **Xray-core** и **sing-box**.
 
-| Layer | Location | Responsibility |
-|---|---|---|
-| UI | `UI/` | WPF shell: profile list/editor, import, group filtering, export, confirmation, connection log and client options. |
-| Profiles | `Profiles/` | VLESS and VMess URI parsing plus HTTP(S) subscription import. |
-| Settings | `Settings/` | Theme, language, autostart, auto-connect, system proxy and last profile. |
-| Network core | `Core/` | Translates a profile into Xray/V2Ray JSON and controls the core process with captured events. |
-| Storage | `Storage/` | Local JSON persistence and selected-profile export. |
-| Windows integration | `Infrastructure/` | Current-user startup registration and WinINET system proxy switching. |
+## Возможности
 
-## Running on Windows
+- **Протоколы:** VLESS (TCP/raw, WebSocket, gRPC, xHTTP, HTTPUpgrade, mKCP; TLS, Reality, XTLS-Vision), VMess, Trojan, Shadowsocks (включая 2022), Hysteria2, TUIC.
+- **Импорт:** ключи `vless://`, `vmess://`, `trojan://`, `ss://`, `hy2://`, `tuic://`, ссылки подписок, base64-блоки, полные JSON-конфигурации Xray и sing-box, наш экспорт и резервные копии. Добавлять можно из поля ввода, из буфера обмена (`Ctrl+V` прямо в окне), из файла или перетаскиванием файла в окно.
+- **Подписки и группы:** автообновление по расписанию и при запуске, трафик и срок действия из заголовка `subscription-userinfo`, свой User-Agent.
+- **Проверка задержки как в v2rayNG:**
+  - *реальная задержка* — HTTP-запрос через сам сервер (`generate_204`);
+  - *TCP-пинг* — время установки TCP-соединения;
+  - *ICMP-пинг* — обычный ping, без прав администратора.
 
-1. Install the [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
-2. Build with `dotnet build V2RaySybau.sln`.
-3. Put a compatible `xray.exe` (or rename a compatible V2Ray executable to `xray.exe`) in `core/xray.exe` next to the executable.
-4. Copy one or more `vless://` / `vmess://` links, or a subscription URL, to the clipboard and select **Импорт**.
+  Есть пакетная проверка всех серверов, группы или выбранных. Результаты приходят в реальном времени и раскрашиваются цветом. Можно отсортировать серверы по задержке, удалить недоступные или дубликаты.
+- **Режимы подключения:**
+  - *Прокси* — локальные SOCKS5 и HTTP плюс системный прокси Windows;
+  - *TUN* — виртуальный адаптер, как VPN в v2rayNG. Можно пустить через туннель весь трафик или **только выбранные приложения** (или все, кроме выбранных).
+- **Анализ пакетов:** для каждого узла в реальном времени показываются задержка, джиттер, минимум, максимум и процент потерь со спарклайнами. Есть живой график скорости и счётчики трафика: через прокси и напрямую.
+- **Журнал:** все запросы (откуда, куда, через какой маршрут: прокси, напрямую или блокировка) и события ядер. Есть фильтры, поиск, пауза и экспорт в CSV/JSON. Логи также пишутся в файлы и хранятся 7 дней.
+- **DNS:** смена серверов (DoH, DoT, UDP; есть пресеты), DNS из ключа или подписки, локальный DNS-сервер на выбранном порту, поддельный DNS (FakeDNS), статические записи.
+- **Маршрутизация:** базовые режимы («всё через прокси», «локальные сети напрямую», «локальные сети и РФ напрямую», «только по правилам»), блокировка рекламы и свои правила по домену, IP, порту, процессу, протоколу или сети. Правила можно импортировать и экспортировать. Есть настройка «домен только для маршрутизации» (`routeOnly`).
+- **Мультиплексирование** (Mux/XUDP) и **фрагментирование** TLS (обход DPI).
+- **Экспорт:** выбранные серверы в JSON, ссылки в буфер обмена, готовая конфигурация ядра для любого сервера, полная резервная копия.
+- **Удобства:** белоснежная и тёмная тема (или как в системе), русский и английский язык (или автоматически), автозапуск с Windows, автоподключение и сканирование серверов при запуске, подтверждение удаления, значок в трее со скоростью.
+- **Обновления через GitHub:** приложение обновляется само из релизов, а Xray, sing-box и geoip/geosite обновляются кнопками на странице «О программе».
 
-Profiles and settings are stored under `%LOCALAPPDATA%\V2RaySybau`. Export only serializes the profile selection to a user-selected JSON file. The core executable is never bundled; obtain it from its official project and comply with its license.
+## Установка
+
+1. Откройте [Releases](https://github.com/Xtop1337/v2raySYBAU/releases) и скачайте `V2Ray Sybau_x.y.z_x64-setup.exe`.
+2. Запустите установщик. Права администратора не нужны: приложение ставится в профиль пользователя. В комплекте уже есть последние Xray, sing-box и geo-файлы.
+3. Скопируйте ключ или ссылку подписки и нажмите **«Из буфера»**.
+
+Для режима **TUN** нужны права администратора. Приложение само предложит перезапуститься с ними.
+
+## Сборка из исходников
+
+Нужны Rust (stable), Node.js 22 и pnpm 10.
+
+```bash
+pnpm install
+```
+
+```bash
+pwsh ./scripts/fetch-cores.ps1
+```
+
+```bash
+pnpm tauri build --bundles nsis --config src-tauri/tauri.no-updater.conf.json
+```
+
+Установщик появится в `target/release/bundle/nsis/`. Для разработки используйте `pnpm tauri dev`.
+
+Тесты ядра. Если указать пути к настоящим ядрам, каждая сгенерированная конфигурация будет проверена `xray run -test` и `sing-box check`, а сквозной тест поднимет локальный сервер Xray:
+
+```bash
+XRAY_BIN=/path/to/xray SINGBOX_BIN=/path/to/sing-box cargo test --workspace
+```
+
+## Выпуск релиза и автообновление
+
+- Каждый push запускает CI: линтеры, тесты с настоящими ядрами и сборку установщика Windows. Установщик доступен в артефактах workflow.
+- Чтобы выпустить релиз, создайте тег, например `v1.0.1`, и отправьте его. Workflow `release.yml` выставит версию, скачает свежие ядра, соберёт NSIS-установщик и опубликует релиз вместе с `latest.json` для встроенного обновления.
+
+```bash
+git tag v1.0.1
+```
+
+```bash
+git push origin v1.0.1
+```
+
+- Обновления подписываются ключом. Публичный ключ уже лежит в `src-tauri/tauri.conf.json`, а приватный нужно добавить в секрет репозитория **`TAURI_SIGNING_PRIVATE_KEY`** (Settings → Secrets and variables → Actions). Если секрета нет, релиз соберётся, но установленные копии не смогут обновиться автоматически.
+- Свою пару ключей можно создать командой `pnpm tauri signer generate`. Публичный ключ запишите в `plugins.updater.pubkey`.
+
+## Устройство
+
+| Каталог | Что внутри |
+|---|---|
+| `crates/sybau-core` | Чистая Rust-библиотека: модели, разбор и сборка ссылок, импорт, подписки, генерация конфигов Xray и sing-box, пинги и пакетный тест, монитор узлов, управление процессами ядер, статистика трафика, журнал, обновление ядер. |
+| `src-tauri` | Оболочка Tauri: команды для UI, фоновые задачи (анализ пакетов, автообновление подписок), трей, системный прокси WinINET, перезапуск с правами администратора, автозапуск, обновление приложения. |
+| `ui` | Интерфейс на Svelte 5 + TypeScript: страницы «Серверы», «Аналитика», «Журнал», «Маршрутизация», «Подписки», «Настройки», «О программе». |
+| `scripts` | Загрузка ядер и выставление версии для CI. |
+
+Как устроено подключение:
+
+- **Прокси.** Xray поднимает SOCKS и HTTP на `127.0.0.1` (по умолчанию порты 10808 и 10809) и при необходимости включает системный прокси.
+- **TUN.** sing-box создаёт адаптер `SybauTun` и передаёт трафик в локальный SOCKS Xray. Процессы ядер исключены из туннеля, чтобы не было петли.
+- **Hysteria2 и TUIC** работают через sing-box напрямую.
+
+Данные, логи и ядра хранятся в `%LOCALAPPDATA%\V2RaySybau`.
+
+## Лицензии
+
+Код приложения распространяется по лицензии MIT. Xray-core (MPL-2.0) и sing-box (GPL-3.0) — отдельные программы. Они поставляются без изменений и запускаются как самостоятельные процессы.
