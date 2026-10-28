@@ -41,6 +41,8 @@ export const app = $state({
   logsPaused: false,
   selectedGroup: 'all',
   selection: [] as string[],
+  /** The server the connect button acts on (v2rayNG "selected server"). */
+  selectedId: null as string | null,
 });
 
 export interface Toast {
@@ -90,8 +92,8 @@ export function applyLanguage() {
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Saves settings (debounced so typing in inputs does not reconnect on every key). */
-export function saveSettings(immediate = false) {
-  if (!app.settings) return;
+export function saveSettings(immediate = false): Promise<void> {
+  if (!app.settings) return Promise.resolve();
   clearTimeout(saveTimer);
   const run = async () => {
     try {
@@ -103,8 +105,9 @@ export function saveSettings(immediate = false) {
       toast(errorText(e), 'error');
     }
   };
-  if (immediate) run();
-  else saveTimer = setTimeout(run, 600);
+  if (immediate) return run();
+  saveTimer = setTimeout(run, 600);
+  return Promise.resolve();
 }
 
 // ---- bootstrap -------------------------------------------------------------------------------
@@ -119,12 +122,18 @@ export async function init() {
   app.elevated = snapshot.elevated;
   app.dataDir = snapshot.dataDir;
   app.platform = snapshot.platform;
+  const known = (id: string | null | undefined) => (id && snapshot.profiles.some((p) => p.id === id) ? id : null);
+  app.selectedId = known(snapshot.connection.profileId) ?? known(snapshot.settings.lastProfileId) ?? snapshot.profiles[0]?.id ?? null;
+  if (app.selectedId) app.selection = [app.selectedId];
   app.logs = await api.logs(2000);
   for (const stats of await api.nodeStats()) app.nodeStats[stats.profileId] = stats;
   applyTheme();
   applyLanguage();
 
-  await listen<Profile[]>('profiles', (e) => (app.profiles = e.payload));
+  await listen<Profile[]>('profiles', (e) => {
+    app.profiles = e.payload;
+    if (!app.profiles.some((p) => p.id === app.selectedId)) app.selectedId = app.connection.profileId ?? app.profiles[0]?.id ?? null;
+  });
   await listen<Subscription[]>('subscriptions', (e) => (app.subscriptions = e.payload));
   await listen<Settings>('settings', (e) => {
     app.settings = e.payload;
@@ -132,6 +141,7 @@ export async function init() {
   });
   await listen<ConnectionInfo>('connection', (e) => {
     app.connection = e.payload;
+    if (e.payload.profileId && !app.selectedId) app.selectedId = e.payload.profileId;
     if (!e.payload.connected) {
       app.traffic = { up: 0, down: 0, directUp: 0, directDown: 0, totalUp: 0, totalDown: 0 };
     }

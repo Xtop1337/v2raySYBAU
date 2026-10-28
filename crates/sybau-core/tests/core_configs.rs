@@ -7,7 +7,7 @@ use std::process::Command;
 use serde_json::Value;
 use sybau_core::config::{self, singbox, xray, ConfigEnv};
 use sybau_core::model::{RoutingRule, RuleKind, RuleOutbound};
-use sybau_core::settings::{ConnectionMode, RoutingPreset, Settings, TunAppMode};
+use sybau_core::settings::{ConnectionMode, RoutingPreset, Settings, TunAppMode, TunEngine};
 use sybau_core::share::parse_link;
 
 const LINKS: &[&str] = &[
@@ -87,7 +87,14 @@ fn variants() -> Vec<(String, Settings)> {
     list.push(("tun-include".into(), tun.clone()));
     tun.tun.app_mode = TunAppMode::Exclude;
     tun.routing.preset = RoutingPreset::Global;
-    list.push(("tun-exclude".into(), tun));
+    list.push(("tun-exclude".into(), tun.clone()));
+    let mut xray_tun = tun.clone();
+    xray_tun.tun.engine = TunEngine::Xray;
+    list.push(("tun-xray-exclude".into(), xray_tun.clone()));
+    xray_tun.tun.app_mode = TunAppMode::Include;
+    xray_tun.tun.strict_route = false;
+    xray_tun.routing.preset = RoutingPreset::BypassLanRu;
+    list.push(("tun-xray-include".into(), xray_tun));
     list
 }
 
@@ -101,7 +108,7 @@ fn xray_accepts_generated_configs() {
     for (variant, settings) in variants() {
         for link in LINKS {
             let profile = parse_link(link).unwrap();
-            let config = xray::build_client(&profile, &settings, &env, settings.proxy.mode == ConnectionMode::Proxy);
+            let Some(config) = config::plan(&profile, &settings, &env).xray else { continue };
             check(&xray_bin, &["run", "-test", "-c"], &config, &format!("{variant}/{}", profile.name));
         }
         let profiles: Vec<_> = LINKS.iter().map(|l| parse_link(l).unwrap()).collect();

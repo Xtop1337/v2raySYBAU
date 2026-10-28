@@ -27,6 +27,16 @@ $xrayDir = Join-Path $temp 'xray'
 Expand-Archive -Path $xrayZip -DestinationPath $xrayDir
 Copy-Item (Join-Path $xrayDir 'xray.exe') $Destination -Force
 Get-ChildItem $xrayDir -Filter '*.dat' | Copy-Item -Destination $Destination -Force
+Get-ChildItem $xrayDir -Filter '*.dll' | Copy-Item -Destination $Destination -Force
+
+# Wintun driver DLL for Xray's built-in TUN (sing-box embeds its own copy).
+if (-not (Test-Path (Join-Path $Destination 'wintun.dll'))) {
+    $wintunZip = Join-Path $temp 'wintun.zip'
+    Invoke-WebRequest -Uri 'https://www.wintun.net/builds/wintun-0.14.1.zip' -OutFile $wintunZip
+    $wintunDir = Join-Path $temp 'wintun'
+    Expand-Archive -Path $wintunZip -DestinationPath $wintunDir
+    Copy-Item (Join-Path $wintunDir 'wintun\bin\amd64\wintun.dll') $Destination -Force
+}
 
 # sing-box (TUN, per-app proxy, Hysteria2, TUIC)
 $singZip = Get-LatestAsset 'SagerNet/sing-box' { $_.name -like 'sing-box-*-windows-amd64.zip' -and $_.name -notlike '*legacy*' }

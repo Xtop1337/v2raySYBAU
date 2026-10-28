@@ -3,34 +3,89 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { api } from './api';
 import { confirm } from './dialogs.svelte';
 import { t } from './i18n.svelte';
-import { app, errorText, toast } from './store.svelte';
-import type { ImportSummary, Profile, TestMethod } from './types';
+import { app, errorText, saveSettings, toast } from './store.svelte';
+import type { ConnectionMode, ImportSummary, Profile, TestMethod, TunEngine } from './types';
 
+// Connection requests are serialized: while one connect is running, further clicks only
+// update `pendingTarget`, and the loop then connects to the most recently chosen server.
+let pendingTarget: string | null = null;
+let currentTarget: string | null = null;
+let connectLoop = false;
+
+function choose(id: string) {
+  if (app.selectedId !== id) {
+    app.selectedId = id;
+    api.selectProfile(id).catch(() => {});
+  }
+}
+
+/** Connects to `id` (switching from the current server if connected). */
 export async function connectTo(id: string) {
+  choose(id);
+  pendingTarget = id;
+  if (connectLoop) return;
+  connectLoop = true;
   app.connecting = true;
   try {
-    await api.connect(id);
-  } catch (e) {
-    const text = errorText(e);
-    if (text.includes('TUN_NEEDS_ADMIN')) {
-      if (await confirm(t('servers.tunNeedsAdmin'), t('servers.restartAdmin'), t('common.cancel'))) {
-        await api.restartAsAdmin().catch((err) => toast(errorText(err), 'error'));
+    while (pendingTarget) {
+      const target = pendingTarget;
+      pendingTarget = null;
+      currentTarget = target;
+      try {
+        await api.connect(target);
+      } catch (e) {
+        const text = errorText(e);
+        if (text.includes('TUN_NEEDS_ADMIN')) {
+          pendingTarget = null;
+          if (await confirm(t('servers.tunNeedsAdmin'), t('servers.restartAdmin'), t('common.cancel'))) {
+            await api.restartAsAdmin().catch((err) => toast(errorText(err), 'error'));
+          }
+        } else {
+          toast(text, 'error', 8000);
+        }
       }
-    } else {
-      toast(text, 'error', 8000);
     }
   } finally {
+    connectLoop = false;
+    currentTarget = null;
     app.connecting = false;
   }
 }
 
-export async function toggleConnection(selected: string | null) {
-  if (app.connection.connected && (!selected || selected === app.connection.profileId)) {
+/** Picks a server in the list; while connected to another one, switches to it right away. */
+export async function selectServer(id: string) {
+  choose(id);
+  if (connectLoop) {
+    // A connect is in progress: finish on the server picked last.
+    pendingTarget = id === currentTarget ? null : id;
+  } else if (app.connection.connected && app.connection.profileId !== id) {
+    await connectTo(id);
+  }
+}
+
+/** The single connect button: disconnects when connected, otherwise connects the chosen server. */
+export async function toggleConnection() {
+  if (app.connection.connected) {
+    pendingTarget = null;
     await api.disconnect().catch((e) => toast(errorText(e), 'error'));
     return;
   }
-  const id = selected ?? app.settings?.lastProfileId ?? app.profiles[0]?.id;
+  const id = app.selectedId ?? app.profiles[0]?.id;
   if (id) await connectTo(id);
+  else toast(t('servers.noServerSelected'));
+}
+
+/** Switches Proxy/TUN mode (and TUN engine); the backend reconnects if connected. */
+export async function setConnectionMode(mode: ConnectionMode, engine?: TunEngine) {
+  const settings = app.settings;
+  if (!settings) return;
+  const needsAdmin = mode === 'tun' && app.platform === 'windows' && !app.elevated;
+  settings.proxy.mode = mode;
+  if (engine) settings.tun.engine = engine;
+  await saveSettings(true);
+  if (needsAdmin && (await confirm(t('servers.tunNeedsAdmin'), t('servers.restartAdmin'), t('common.cancel')))) {
+    await api.restartAsAdmin().catch((err) => toast(errorText(err), 'error'));
+  }
 }
 
 function reportImport(summary: ImportSummary) {

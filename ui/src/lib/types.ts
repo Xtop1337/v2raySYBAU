@@ -95,6 +95,7 @@ export interface RoutingRule {
 export type Theme = 'system' | 'light' | 'dark';
 export type ConnectionMode = 'proxy' | 'tun';
 export type TunAppMode = 'all' | 'include' | 'exclude';
+export type TunEngine = 'singbox' | 'xray';
 export type RoutingPreset = 'global' | 'bypassLan' | 'bypassLanRu' | 'directByDefault';
 export type MonitorScope = 'active' | 'group' | 'all';
 
@@ -121,6 +122,7 @@ export interface Settings {
     allowLan: boolean;
   };
   tun: {
+    engine: TunEngine;
     appMode: TunAppMode;
     apps: string[];
     stack: string;

@@ -10,7 +10,8 @@ pub mod xray;
 use serde_json::Value;
 
 use crate::model::Profile;
-use crate::settings::{ConnectionMode, Settings};
+use crate::settings::{ConnectionMode, Settings, TunEngine};
+pub use xray::XrayMode;
 
 /// Facts about the environment that influence the generated configs.
 #[derive(Debug, Clone)]
@@ -39,12 +40,18 @@ pub struct LaunchPlan {
 pub fn plan(profile: &Profile, settings: &Settings, env: &ConfigEnv) -> LaunchPlan {
     let native_singbox = profile.protocol.needs_singbox();
     match (settings.proxy.mode, native_singbox) {
-        (ConnectionMode::Proxy, false) => LaunchPlan { xray: Some(xray::build_client(profile, settings, env, true)), singbox: None },
+        (ConnectionMode::Proxy, false) => {
+            LaunchPlan { xray: Some(xray::build_client(profile, settings, env, XrayMode::Proxy)), singbox: None }
+        }
+        // Xray's own TUN; Hysteria2/TUIC always need sing-box.
+        (ConnectionMode::Tun, false) if settings.tun.engine == TunEngine::Xray => {
+            LaunchPlan { xray: Some(xray::build_client(profile, settings, env, XrayMode::Tun)), singbox: None }
+        }
         (ConnectionMode::Proxy, true) => {
             LaunchPlan { xray: None, singbox: Some(singbox::build(profile, settings, env, singbox::Mode::Proxy)) }
         }
         (ConnectionMode::Tun, false) => LaunchPlan {
-            xray: Some(xray::build_client(profile, settings, env, false)),
+            xray: Some(xray::build_client(profile, settings, env, XrayMode::BehindSingBox)),
             singbox: Some(singbox::build(profile, settings, env, singbox::Mode::TunOverXray)),
         },
         (ConnectionMode::Tun, true) => {

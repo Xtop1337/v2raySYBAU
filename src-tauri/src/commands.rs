@@ -115,6 +115,11 @@ pub async fn connect(service: Svc<'_>, id: Uuid) -> CmdResult<ConnectionInfo> {
 }
 
 #[tauri::command]
+pub async fn select_profile(service: Svc<'_>, id: Uuid) -> CmdResult<()> {
+    service.select_profile(id).await.map_err(err)
+}
+
+#[tauri::command]
 pub async fn disconnect(service: Svc<'_>) -> CmdResult<()> {
     service.disconnect().await.map_err(err)
 }

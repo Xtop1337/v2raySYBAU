@@ -11,6 +11,8 @@
     importFiles,
     importText,
     runTest,
+    selectServer,
+    setConnectionMode,
     toggleConnection,
   } from '../lib/actions';
   import { api } from '../lib/api';
@@ -37,7 +39,8 @@
   );
   const selected = $derived(app.selection.filter((id) => visible.some((p) => p.id === id)));
   const focused = $derived(selected.length ? selected[selected.length - 1] : null);
-  const willDisconnect = $derived(app.connection.connected && (!focused || focused === app.connection.profileId));
+  const chosen = $derived(app.profiles.find((p) => p.id === app.selectedId) ?? null);
+  const tunMode = $derived(app.settings?.proxy.mode === 'tun');
 
   $effect(() => {
     if (app.selectedGroup !== 'all' && !groups.includes(app.selectedGroup)) app.selectedGroup = 'all';
@@ -64,6 +67,7 @@
     } else {
       app.selection = [profile.id];
       lastClicked = profile.id;
+      selectServer(profile.id);
     }
   }
 
@@ -141,29 +145,51 @@
     <div class="connect-card">
       <div class="conn-state">
         <span class="dot" class:on={app.connection.connected} class:busy={app.connecting}></span>
-        <div>
+        <div class="conn-text">
           <div class="conn-title">
             {app.connecting ? t('status.connecting') : app.connection.connected ? t('status.connected') : t('status.disconnected')}
           </div>
-          <div class="faint conn-sub">
-            {#if app.connection.connected}
+          <div class="faint conn-sub" data-testid="chosen-server">
+            {#if app.connection.connected && !app.connecting}
               {app.connection.profileName} · {app.connection.mode === 'tun' ? t('status.mode.tun') : t('status.mode.proxy')}
               {#if app.settings?.general.showSpeed}· ↑ {speed(app.traffic.up)} ↓ {speed(app.traffic.down)}{/if}
             {:else}
-              {app.profiles.find((p) => p.id === (focused ?? app.settings?.lastProfileId))?.name ?? ''}
+              {chosen ? chosen.name || chosen.address : t('servers.noServerSelected')}
             {/if}
           </div>
         </div>
       </div>
+      {#if app.settings}
+        <div class="mode">
+          <div class="segmented" role="radiogroup" aria-label={t('settings.mode')}>
+            <button class:active={!tunMode} disabled={app.connecting} onclick={() => setConnectionMode('proxy')}>{t('servers.mode.proxy')}</button>
+            <button class:active={tunMode} disabled={app.connecting} onclick={() => setConnectionMode('tun')}>TUN</button>
+          </div>
+          {#if tunMode}
+            <select
+              class="select engine"
+              title={t('servers.engineHint')}
+              aria-label={t('settings.tunEngine')}
+              value={app.settings.tun.engine}
+              disabled={app.connecting}
+              onchange={(e) => setConnectionMode('tun', e.currentTarget.value as 'singbox' | 'xray')}
+            >
+              <option value="singbox">sing-box</option>
+              <option value="xray">Xray</option>
+            </select>
+          {/if}
+        </div>
+      {/if}
       <button
         class="btn connect-btn"
-        class:primary={!willDisconnect}
-        class:stop={willDisconnect}
+        class:primary={!app.connection.connected}
+        class:stop={app.connection.connected}
         disabled={app.connecting || !app.profiles.length}
-        onclick={() => toggleConnection(focused)}
+        data-testid="connect-button"
+        onclick={() => toggleConnection()}
       >
         <Icon name="power" size={17} />
-        {willDisconnect ? t('servers.disconnect') : t('servers.connect')}
+        {app.connecting ? t('status.connecting') : app.connection.connected ? t('servers.disconnect') : t('servers.connect')}
       </button>
     </div>
   </div>
@@ -238,6 +264,7 @@
           <div
             class="tr"
             class:selected={app.selection.includes(p.id)}
+            class:chosen={app.selectedId === p.id}
             class:active
             role="row"
             tabindex="-1"
@@ -338,8 +365,50 @@
     min-width: 0;
   }
 
+  .conn-text {
+    min-width: 0;
+  }
+
   .conn-title {
     font-weight: 600;
+  }
+
+  .mode {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .segmented {
+    display: inline-flex;
+    padding: 3px;
+    gap: 2px;
+    border-radius: 9px;
+    background: var(--surface-3);
+  }
+
+  .segmented button {
+    border: none;
+    background: none;
+    padding: 5px 12px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+
+  .segmented button.active {
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .segmented button:disabled {
+    cursor: default;
+  }
+
+  .engine {
+    height: 32px;
   }
 
   .conn-sub {
@@ -584,6 +653,10 @@
 
   .tr.active {
     box-shadow: inset 3px 0 0 var(--success);
+  }
+
+  .tr.chosen .avatar {
+    box-shadow: 0 0 0 2px var(--accent);
   }
 
   .c-name {

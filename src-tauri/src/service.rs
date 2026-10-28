@@ -13,7 +13,7 @@ use sybau_core::config::{self, ConfigEnv};
 use sybau_core::import::{dedupe, import_text, ImportResult};
 use sybau_core::logs::Journal;
 use sybau_core::model::{DelayInfo, LogEntry, LogLevel, Profile, Subscription, TestMethod};
-use sybau_core::runtime::{core_version, CoreEvent, CoreKind, CoreManager, CorePaths, TrafficMonitor, TrafficSample};
+use sybau_core::runtime::{core_version, CoreEvent, CoreKind, CoreManager, CorePaths, StartOptions, TrafficMonitor, TrafficSample};
 use sybau_core::settings::{ConnectionMode, MonitorScope, Settings};
 use sybau_core::storage::Storage;
 use sybau_core::subscription;
@@ -637,15 +637,27 @@ impl Service {
         let plan = config::plan(&profile, &settings, &self.config_env());
         {
             let mut conn = self.conn.lock().await;
-            stop_active(&mut conn, &settings).await;
-            let ready = if tun { None } else { Some(settings.proxy.socks_port) };
-            if let Err(e) = conn.core.start(&plan, ready).await {
+            // Switching servers: the running cores are replaced by `start`, which waits for
+            // their ports and TUN adapter to be released before launching the new ones.
+            let previous = conn.active.take();
+            if let Some(previous) = &previous {
+                previous.traffic_cancel.cancel();
+            }
+            let system_proxy = !tun && settings.proxy.system_proxy;
+            let previous_proxy = previous.as_ref().is_some_and(|p| p.system_proxy);
+            if previous_proxy && !system_proxy {
+                let _ = win::sysproxy::set(false, settings.proxy.http_port, "");
+            }
+            if let Err(e) = conn.core.start(&plan, &StartOptions::for_plan(&plan, &settings)).await {
+                conn.core.stop().await;
+                if previous_proxy {
+                    let _ = win::sysproxy::set(false, settings.proxy.http_port, "");
+                }
                 drop(conn);
                 self.log(LogLevel::Error, format!("connect «{}»: {e:#}", profile.display_name()));
                 self.notify_connection().await;
                 return Err(e);
             }
-            let system_proxy = !tun && settings.proxy.system_proxy;
             if system_proxy {
                 if let Err(e) = win::sysproxy::set(true, settings.proxy.http_port, &settings.proxy.bypass) {
                     self.log(LogLevel::Warning, format!("system proxy: {e:#}"));
@@ -677,9 +689,10 @@ impl Service {
                 since: Utc::now(),
                 system_proxy,
                 socks_port,
-                core: match (plan.xray.is_some(), plan.singbox.is_some()) {
-                    (true, true) => "xray+sing-box",
-                    (true, false) => "xray",
+                core: match (plan.xray.is_some(), plan.singbox.is_some(), tun) {
+                    (true, true, _) => "xray+sing-box",
+                    (true, false, true) => "xray (tun)",
+                    (true, false, false) => "xray",
                     _ => "sing-box",
                 },
                 traffic_cancel,
@@ -709,6 +722,19 @@ impl Service {
         }
         *self.last_traffic.lock().unwrap() = TrafficSample::default();
         self.notify_connection().await;
+        Ok(())
+    }
+
+    /// Remembers the server chosen in the list, used by the tray "Connect" and auto-connect.
+    pub async fn select_profile(&self, id: Uuid) -> Result<()> {
+        let mut data = self.data.lock().await;
+        if !data.profiles.iter().any(|p| p.id == id) {
+            bail!("profile not found");
+        }
+        if data.settings.last_profile_id != Some(id) {
+            data.settings.last_profile_id = Some(id);
+            self.storage.save_settings(&data.settings)?;
+        }
         Ok(())
     }
 

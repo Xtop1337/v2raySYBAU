@@ -113,9 +113,21 @@ pub enum TunAppMode {
     Exclude,
 }
 
+/// Which core owns the virtual adapter in TUN mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TunEngine {
+    /// sing-box TUN forwarding to the local Xray SOCKS inbound.
+    #[default]
+    SingBox,
+    /// Xray's built-in TUN inbound (Xray 26+), no sing-box involved.
+    Xray,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TunSettings {
+    pub engine: TunEngine,
     pub app_mode: TunAppMode,
     /// Executable names such as `chrome.exe`, `Telegram.exe`.
     pub apps: Vec<String>,
@@ -127,7 +139,14 @@ pub struct TunSettings {
 
 impl Default for TunSettings {
     fn default() -> Self {
-        TunSettings { app_mode: TunAppMode::All, apps: Vec::new(), stack: "mixed".into(), mtu: 9000, strict_route: true }
+        TunSettings {
+            engine: TunEngine::SingBox,
+            app_mode: TunAppMode::All,
+            apps: Vec::new(),
+            stack: "mixed".into(),
+            mtu: 9000,
+            strict_route: true,
+        }
     }
 }
 

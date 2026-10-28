@@ -4,16 +4,28 @@ use serde_json::{json, Map, Value};
 
 use super::{dns_host, is_ip, remote_dns, ConfigEnv, PRIVATE_CIDRS, RU_DOMAIN_SUFFIXES};
 use crate::model::{Network, Profile, Protocol, RuleKind, Security};
-use crate::settings::{RoutingPreset, Settings};
+use crate::settings::{RoutingPreset, Settings, TunAppMode};
 use crate::util::merge_json;
 
 pub const PROXY_TAG: &str = "proxy";
+pub const TUN_TAG: &str = "tun-in";
 const FAKEDNS_POOL: &str = "198.18.0.0/15";
 
-/// Builds the config used to connect. `proxy_mode` is false when sing-box TUN sits in front of Xray.
-pub fn build_client(profile: &Profile, settings: &Settings, env: &ConfigEnv, proxy_mode: bool) -> Value {
+/// How Xray takes part in the connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum XrayMode {
+    /// Local SOCKS/HTTP proxy (optionally the system proxy).
+    Proxy,
+    /// sing-box TUN sits in front and forwards to the SOCKS inbound.
+    BehindSingBox,
+    /// Xray's own TUN inbound captures the traffic.
+    Tun,
+}
+
+/// Builds the config used to connect.
+pub fn build_client(profile: &Profile, settings: &Settings, env: &ConfigEnv, mode: XrayMode) -> Value {
     let listen = if settings.proxy.allow_lan { "0.0.0.0" } else { "127.0.0.1" };
-    let fake_dns = settings.dns.fake_dns && proxy_mode;
+    let fake_dns = settings.dns.fake_dns && mode != XrayMode::BehindSingBox;
     let sniffing = sniffing(settings, fake_dns);
 
     let mut inbounds = vec![
@@ -26,6 +38,9 @@ pub fn build_client(profile: &Profile, settings: &Settings, env: &ConfigEnv, pro
             "settings": {}, "sniffing": sniffing
         }),
     ];
+    if mode == XrayMode::Tun {
+        inbounds.push(tun_inbound(settings, sniffing.clone()));
+    }
     let remote = remote_dns(profile, settings);
     if settings.dns.local_dns {
         let target = dns_host(&remote);
@@ -63,7 +78,7 @@ pub fn build_client(profile: &Profile, settings: &Settings, env: &ConfigEnv, pro
         "dns": dns(profile, settings, env, fake_dns),
         "inbounds": inbounds,
         "outbounds": outbounds,
-        "routing": routing(settings, env),
+        "routing": routing(settings, env, mode),
         "api": {"tag": "api", "listen": format!("127.0.0.1:{}", settings.advanced.api_port), "services": ["StatsService"]},
         "stats": {},
         "policy": {"system": {"statsOutboundUplink": true, "statsOutboundDownlink": true}}
@@ -102,6 +117,24 @@ pub fn build_batch(entries: &[(&Profile, u16)], settings: &Settings) -> Value {
         "inbounds": inbounds,
         "outbounds": outbounds,
         "routing": {"domainStrategy": "AsIs", "rules": rules}
+    })
+}
+
+/// Xray TUN inbound (Wintun on Windows). Xray adds the system routes itself and keeps its own
+/// connections out of the tunnel (`autoOutboundsInterface` defaults to "auto" with routes).
+fn tun_inbound(settings: &Settings, sniffing: Value) -> Value {
+    let block_leaks: Vec<&str> = if settings.tun.strict_route { vec!["dns", "misconfigtun"] } else { vec![] };
+    json!({
+        "tag": TUN_TAG, "protocol": "tun", "port": 0,
+        "settings": {
+            "name": super::singbox::TUN_INTERFACE,
+            "mtu": settings.tun.mtu.clamp(1280, 9000),
+            "gateway": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+            "dns": ["1.1.1.1"],
+            "autoSystemRoutingTable": ["0.0.0.0/0", "::/0"],
+            "autoSystemWfpBlockLeak": block_leaks
+        },
+        "sniffing": sniffing
     })
 }
 
@@ -166,8 +199,17 @@ fn dns(profile: &Profile, settings: &Settings, env: &ConfigEnv, fake_dns: bool) 
     })
 }
 
-fn routing(settings: &Settings, env: &ConfigEnv) -> Value {
+fn routing(settings: &Settings, env: &ConfigEnv, mode: XrayMode) -> Value {
+    let tun = mode == XrayMode::Tun;
+    let apps: Vec<&String> = settings.tun.apps.iter().filter(|a| !a.trim().is_empty()).collect();
     let mut rules = Vec::new();
+    if tun {
+        // System DNS queries reach the TUN and are answered by Xray's DNS module.
+        rules.push(json!({"type": "field", "inboundTag": [TUN_TAG], "port": "53", "outboundTag": "dns-out"}));
+        if settings.tun.app_mode == TunAppMode::Exclude && !apps.is_empty() {
+            rules.push(json!({"type": "field", "inboundTag": [TUN_TAG], "process": apps, "outboundTag": "direct"}));
+        }
+    }
     if settings.dns.local_dns {
         rules.push(json!({"type": "field", "inboundTag": ["dns-in"], "outboundTag": "dns-out"}));
     }
@@ -195,7 +237,8 @@ fn routing(settings: &Settings, env: &ConfigEnv) -> Value {
             RuleKind::Port => entry["port"] = json!(values.join(",")),
             RuleKind::Protocol => entry["protocol"] = json!(values),
             RuleKind::Network => entry["network"] = json!(values.join(",")),
-            // Process rules are applied by sing-box in TUN mode.
+            // The owning process is only known for traffic captured by Xray's own TUN.
+            RuleKind::Process if tun => entry["process"] = json!(values),
             RuleKind::Process => continue,
         }
         rules.push(entry);
@@ -220,6 +263,11 @@ fn routing(settings: &Settings, env: &ConfigEnv) -> Value {
         if env.geo_available {
             rules.push(json!({"type": "field", "ip": ["geoip:ru"], "outboundTag": "direct"}));
         }
+    }
+    if tun && settings.tun.app_mode == TunAppMode::Include && !apps.is_empty() {
+        // Only the listed applications use the proxy; the rest of the tunnel goes direct.
+        rules.push(json!({"type": "field", "inboundTag": [TUN_TAG], "process": apps, "outboundTag": PROXY_TAG}));
+        rules.push(json!({"type": "field", "inboundTag": [TUN_TAG], "outboundTag": "direct"}));
     }
     if preset == RoutingPreset::DirectByDefault {
         rules.push(json!({"type": "field", "network": "tcp,udp", "outboundTag": "direct"}));

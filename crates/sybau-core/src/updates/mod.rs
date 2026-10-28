@@ -138,7 +138,7 @@ pub fn install_core_zip(kind: CoreKind, archive: &[u8], dir: &Path) -> Result<Ve
         let Some(name) = Path::new(file.name()).file_name().map(|n| n.to_string_lossy().to_string()) else { continue };
         let lower = name.to_ascii_lowercase();
         let wanted = match kind {
-            CoreKind::Xray => lower == CoreKind::Xray.exe_name() || lower.ends_with(".dat"),
+            CoreKind::Xray => lower == CoreKind::Xray.exe_name() || lower.ends_with(".dat") || lower.ends_with(".dll"),
             CoreKind::SingBox => lower == CoreKind::SingBox.exe_name() || lower.ends_with(".dll"),
         };
         if !wanted {

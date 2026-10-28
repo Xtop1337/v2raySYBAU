@@ -84,6 +84,7 @@ pub fn run() {
             commands::update_subscription,
             commands::update_all_subscriptions,
             commands::connect,
+            commands::select_profile,
             commands::disconnect,
             commands::save_settings,
             commands::start_test,

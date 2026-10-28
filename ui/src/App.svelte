@@ -2,7 +2,7 @@
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { onMount } from 'svelte';
   import Icon from './components/Icon.svelte';
-  import { importFiles, toggleConnection } from './lib/actions';
+  import { importFiles } from './lib/actions';
   import { closeDialog, dialog } from './lib/dialogs.svelte';
   import { duration, speed } from './lib/format';
   import { t } from './lib/i18n.svelte';
@@ -70,16 +70,6 @@
           </button>
         {/each}
       </nav>
-      <div class="spacer"></div>
-      <button
-        class="quick"
-        class:on={app.connection.connected}
-        disabled={app.connecting || !app.profiles.length}
-        onclick={() => toggleConnection(null)}
-      >
-        <Icon name="power" size={20} stroke={2.2} />
-        <span>{app.connecting ? t('status.connecting') : app.connection.connected ? t('servers.disconnect') : t('servers.connect')}</span>
-      </button>
     </aside>
 
     <main>
@@ -201,31 +191,6 @@
     border-radius: 50%;
     background: var(--danger);
     margin-left: auto;
-  }
-
-  .quick {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 9px;
-    height: 46px;
-    border-radius: 12px;
-    border: none;
-    background: var(--accent);
-    color: #fff;
-    font-weight: 600;
-    cursor: pointer;
-    box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent);
-  }
-
-  .quick.on {
-    background: var(--success);
-    box-shadow: 0 6px 18px color-mix(in srgb, var(--success) 35%, transparent);
-  }
-
-  .quick:disabled {
-    opacity: 0.6;
-    cursor: default;
   }
 
   main {
