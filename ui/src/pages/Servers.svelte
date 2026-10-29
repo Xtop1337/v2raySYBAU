@@ -16,7 +16,7 @@
     toggleConnection,
   } from '../lib/actions';
   import { api } from '../lib/api';
-  import { delayClass, emptyProfile, flag, protocolLabel, speed, transportLabel } from '../lib/format';
+  import { delayClass, emptyProfile, flag, flagOfCode, protocolLabel, speed, transportLabel } from '../lib/format';
   import { t } from '../lib/i18n.svelte';
   import { app, errorText, toast } from '../lib/store.svelte';
   import type { Profile, TestMethod } from '../lib/types';
@@ -46,13 +46,20 @@
     if (app.selectedGroup !== 'all' && !groups.includes(app.selectedGroup)) app.selectedGroup = 'all';
   });
 
-  function targets(): string[] | null {
-    if (selected.length) return selected;
+  // The whole list on screen (all servers, or the open subscription / search result).
+  function allTargets(): string[] | null {
     return app.selectedGroup === 'all' && !search ? null : visible.map((p) => p.id);
   }
 
+  // The server chosen in the list, or the Ctrl/Shift selection when several are selected.
+  const chosenTargets = $derived(selected.length > 1 ? selected : chosen ? [chosen.id] : []);
+
   function test(method: TestMethod) {
-    runTest(targets(), method);
+    runTest(allTargets(), method);
+  }
+
+  function testChosen() {
+    if (chosenTargets.length) runTest(chosenTargets, app.settings?.test.method ?? 'real');
   }
 
   function onRowClick(event: MouseEvent, profile: Profile) {
@@ -95,7 +102,8 @@
       app.selection = visible.map((p) => p.id);
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
       event.preventDefault();
-      test(app.settings?.test.method ?? 'real');
+      if (event.shiftKey) testChosen();
+      else test(app.settings?.test.method ?? 'real');
     } else if (event.key === 'Delete' && selected.length) {
       deleteProfiles(selected);
     } else if (event.key === 'Enter' && focused) {
@@ -152,9 +160,15 @@
           <div class="faint conn-sub" data-testid="chosen-server">
             {#if app.connection.connected && !app.connecting}
               {app.connection.profileName} · {app.connection.mode === 'tun' ? t('status.mode.tun') : t('status.mode.proxy')}
+              ·
+              {#if app.check?.exit}
+                <span data-testid="exit-ip">{t('connect.exit', { ip: `${flagOfCode(app.check.exit.country)} ${app.check.exit.ip}`.trim() })}</span>
+              {:else if !app.check}
+                {t('connect.checking')}
+              {/if}
               {#if app.settings?.general.showSpeed}· ↑ {speed(app.traffic.up)} ↓ {speed(app.traffic.down)}{/if}
             {:else}
-              {chosen ? chosen.name || chosen.address : t('servers.noServerSelected')}
+              {chosen ? `${chosen.name.match(/[\u{1F1E6}-\u{1F1FF}]{2}/u) ? '' : (flag(chosen.name) ?? '')} ${chosen.name || chosen.address}`.trim() : t('servers.noServerSelected')}
             {/if}
           </div>
         </div>
@@ -220,10 +234,14 @@
       </div>
       <button class="btn small" onclick={() => api.cancelTest()}><Icon name="stop" size={14} />{t('servers.stopTest')}</button>
     {:else}
-      <button class="btn small primary" onclick={() => test('real')} title="Ctrl+R"><Icon name="zap" size={14} />{t('servers.testReal')}</button>
+      <span class="faint label">{app.selectedGroup === 'all' && !search ? t('servers.testAll') : t('servers.testList', { n: visible.length })}</span>
+      <button class="btn small primary" onclick={() => test('real')} title="Ctrl+R" data-testid="test-all"><Icon name="zap" size={14} />{t('servers.testReal')}</button>
       <button class="btn small" onclick={() => test('tcp')}>{t('servers.testTcp')}</button>
       <button class="btn small" onclick={() => test('icmp')}>{t('servers.testIcmp')}</button>
-      <span class="faint hint">{selected.length ? t('servers.selected', { n: selected.length }) : ''}</span>
+      <span class="sep"></span>
+      <button class="btn small" disabled={!chosenTargets.length} onclick={testChosen} title="Ctrl+Shift+R" data-testid="test-chosen">
+        <Icon name="zap" size={14} />{selected.length > 1 ? t('servers.testSelected', { n: selected.length }) : t('servers.testChosen')}
+      </button>
     {/if}
     <div class="spacer"></div>
     <button class="btn small" onclick={() => api.sortByDelay()}><Icon name="sort" size={14} />{t('servers.sortByDelay')}</button>
@@ -274,7 +292,7 @@
             oncontextmenu={(e) => onContextMenu(e, p)}
           >
             <span class="c-name">
-              <span class="avatar">{flag(p.name) ?? protocolLabel[p.protocol].slice(0, 1)}</span>
+              <span class="avatar" class:flag={flag(p.name)}>{flag(p.name) ?? protocolLabel[p.protocol].slice(0, 1)}</span>
               <span class="name-text">
                 <span class="name">{p.name.replace(/^\s*(?:[\u{1F1E6}-\u{1F1FF}]){2}\s*/u, '') || p.address}</span>
                 {#if app.selectedGroup === 'all' && groups.length > 1}<span class="faint group">{p.group}</span>{/if}
@@ -509,8 +527,15 @@
     color: var(--text);
   }
 
-  .hint {
+  .label {
     font-size: 12.5px;
+  }
+
+  .sep {
+    width: 1px;
+    height: 18px;
+    margin: 0 4px;
+    background: var(--border);
   }
 
   .progress {
@@ -677,6 +702,11 @@
     font-size: 15px;
     font-weight: 600;
     color: var(--text-2);
+  }
+
+  .avatar.flag {
+    font-size: 19px;
+    font-weight: 400;
   }
 
   .name-text {

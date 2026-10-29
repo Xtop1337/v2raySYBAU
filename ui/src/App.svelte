@@ -2,6 +2,7 @@
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { onMount } from 'svelte';
   import Icon from './components/Icon.svelte';
+  import Logo from './components/Logo.svelte';
   import { importFiles } from './lib/actions';
   import { closeDialog, dialog } from './lib/dialogs.svelte';
   import { duration, speed } from './lib/format';
@@ -58,7 +59,7 @@
   <div class="shell">
     <aside class="sidebar">
       <div class="brand">
-        <img src="/icon.svg" alt="" width="30" height="30" />
+        <Logo size={32} />
         <span>V2Ray Sybau</span>
       </div>
       <nav>

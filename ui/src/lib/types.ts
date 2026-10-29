@@ -177,6 +177,20 @@ export interface ConnectionInfo {
   core: string | null;
 }
 
+export interface ExitInfo {
+  ip: string;
+  country: string;
+}
+
+export interface ConnectionCheck {
+  profileId: string;
+  profileName: string;
+  mode: ConnectionMode;
+  exit: ExitInfo | null;
+  problem: 'no-traffic' | 'direct' | 'system-proxy' | null;
+  detail: string | null;
+}
+
 export interface Snapshot {
   profiles: Profile[];
   subscriptions: Subscription[];

@@ -3,7 +3,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { api } from './api';
 import { confirm } from './dialogs.svelte';
 import { t } from './i18n.svelte';
-import { app, errorText, saveSettings, toast } from './store.svelte';
+import { app, errorText, hideConnecting, saveSettings, showConnecting, toast } from './store.svelte';
 import type { ConnectionMode, ImportSummary, Profile, TestMethod, TunEngine } from './types';
 
 // Connection requests are serialized: while one connect is running, further clicks only
@@ -31,9 +31,11 @@ export async function connectTo(id: string) {
       const target = pendingTarget;
       pendingTarget = null;
       currentTarget = target;
+      showConnecting();
       try {
         await api.connect(target);
       } catch (e) {
+        hideConnecting();
         const text = errorText(e);
         if (text.includes('TUN_NEEDS_ADMIN')) {
           pendingTarget = null;

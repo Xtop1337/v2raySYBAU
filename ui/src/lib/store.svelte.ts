@@ -3,8 +3,10 @@
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { api } from './api';
-import { resolveLanguage, setLanguage } from './i18n.svelte';
+import { flagOfCode } from './format';
+import { resolveLanguage, setLanguage, t } from './i18n.svelte';
 import type {
+  ConnectionCheck,
   ConnectionInfo,
   DelayResult,
   LogEntry,
@@ -43,6 +45,8 @@ export const app = $state({
   selection: [] as string[],
   /** The server the connect button acts on (v2rayNG "selected server"). */
   selectedId: null as string | null,
+  /** Traffic check of the current connection (exit address), null until it finishes. */
+  check: null as ConnectionCheck | null,
 });
 
 export interface Toast {
@@ -54,12 +58,50 @@ export interface Toast {
 export const toasts = $state({ list: [] as Toast[] });
 let toastId = 0;
 
-export function toast(text: string, kind: Toast['kind'] = 'info', timeout = 4000) {
+export function toast(text: string, kind: Toast['kind'] = 'info', timeout = 4000): number {
   const id = ++toastId;
   toasts.list.push({ id, kind, text });
-  setTimeout(() => {
-    toasts.list = toasts.list.filter((t) => t.id !== id);
-  }, timeout);
+  setTimeout(() => dismissToast(id), timeout);
+  return id;
+}
+
+export function dismissToast(id: number) {
+  toasts.list = toasts.list.filter((t) => t.id !== id);
+}
+
+// "Creating the tunnel…" stays on screen until the traffic check of that connection reports.
+let tunnelToast: number | null = null;
+
+export function showConnecting() {
+  if (tunnelToast !== null) dismissToast(tunnelToast);
+  tunnelToast = toast(t('connect.creating'), 'info', 30000);
+}
+
+export function hideConnecting() {
+  if (tunnelToast !== null) dismissToast(tunnelToast);
+  tunnelToast = null;
+}
+
+function reportCheck(check: ConnectionCheck) {
+  hideConnecting();
+  const exit = check.exit ? `${flagOfCode(check.exit.country)} ${check.exit.ip}`.trim() : '';
+  switch (check.problem) {
+    case null: {
+      // 2ip.ru and other Russian sites show the user's own IP with this preset, on purpose.
+      const ru = app.settings?.routing.preset === 'bypassLanRu' ? ` ${t('connect.ruDirect')}` : '';
+      toast(t('connect.created', { ip: exit }) + ru, 'success', ru ? 9000 : 6000);
+      break;
+    }
+    case 'no-traffic':
+      toast(t('connect.noTraffic', { name: check.profileName }), 'error', 10000);
+      break;
+    case 'direct':
+      toast(t('connect.direct', { ip: exit }), 'error', 12000);
+      break;
+    case 'system-proxy':
+      toast(t('connect.systemProxy', { detail: check.detail ?? '' }), 'error', 12000);
+      break;
+  }
 }
 
 export function errorText(e: unknown): string {
@@ -140,6 +182,7 @@ export async function init() {
     applyTheme();
   });
   await listen<ConnectionInfo>('connection', (e) => {
+    if (e.payload.since !== app.connection.since || !e.payload.connected) app.check = null;
     app.connection = e.payload;
     if (e.payload.profileId && !app.selectedId) app.selectedId = e.payload.profileId;
     if (!e.payload.connected) {
@@ -165,5 +208,9 @@ export async function init() {
     if (app.logs.length > MAX_LOGS) app.logs.splice(0, app.logs.length - MAX_LOGS);
   });
   await listen<string>('core-error', (e) => toast(e.payload, 'error', 7000));
+  await listen<ConnectionCheck>('connection-check', (e) => {
+    app.check = e.payload;
+    reportCheck(e.payload);
+  });
   app.ready = true;
 }
