@@ -14,6 +14,7 @@ use serde_json::Value;
 use crate::config::LaunchPlan;
 use crate::model::LogEntry;
 pub use process::{free_ports, wait_for_port, CoreProcess};
+use process::{is_own_pid, request_stop};
 pub use traffic::{TrafficMonitor, TrafficSample};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -82,6 +83,8 @@ pub struct CoreManager {
     sink: EventSink,
     xray: Option<CoreProcess>,
     singbox: Option<CoreProcess>,
+    /// Config of the running sing-box, to keep it (and its TUN adapter) across server switches.
+    singbox_config: Option<Value>,
     tun_active: bool,
 }
 
@@ -130,11 +133,16 @@ pub async fn wait_ports_free(ports: &[u16], timeout: Duration) -> Option<u16> {
 
 impl CoreManager {
     pub fn new(paths: CorePaths, sink: EventSink) -> Self {
-        CoreManager { paths, sink, xray: None, singbox: None, tun_active: false }
+        CoreManager { paths, sink, xray: None, singbox: None, singbox_config: None, tun_active: false }
     }
 
     pub fn paths(&self) -> &CorePaths {
         &self.paths
+    }
+
+    /// Process ids of the running Xray and sing-box.
+    pub fn pids(&self) -> (Option<u32>, Option<u32>) {
+        (self.xray.as_ref().map(CoreProcess::pid), self.singbox.as_ref().map(CoreProcess::pid))
     }
 
     pub fn is_running(&self) -> bool {
@@ -147,15 +155,23 @@ impl CoreManager {
     pub async fn start(&mut self, plan: &LaunchPlan, options: &StartOptions) -> Result<()> {
         let had_tun = self.tun_active;
         let was_running = self.xray.is_some() || self.singbox.is_some();
-        self.stop().await;
-        if was_running {
-            if let Some(port) = wait_ports_free(&options.ports, Duration::from_secs(3)).await {
-                bail!("local port {port} is still in use by another program; change it in the settings");
+        // TUN over Xray: a new server only changes Xray's config. sing-box keeps running with
+        // its TUN adapter, so Windows does not tear the adapter and its routes down and build
+        // them again on every switch (which became unreliable after a few switches).
+        let keep_singbox = plan.xray.is_some()
+            && plan.singbox.is_some()
+            && self.singbox.as_ref().is_some_and(CoreProcess::is_alive)
+            && self.singbox_config.as_ref() == plan.singbox.as_ref();
+        if keep_singbox {
+            if let Some(mut xray) = self.xray.take() {
+                xray.kill().await;
             }
-            if had_tun || options.tun {
-                // Windows removes the Wintun adapter of the previous core asynchronously.
-                tokio::time::sleep(Duration::from_millis(1200)).await;
-            }
+        } else {
+            self.stop().await;
+        }
+        self.ensure_ports_free(&options.ports, was_running).await?;
+        if was_running && !keep_singbox && (had_tun || options.tun) {
+            wait_tun_removed().await;
         }
         self.tun_active = options.tun;
         let ready_port = options.ready_port;
@@ -166,9 +182,10 @@ impl CoreManager {
                 self.wait_ready(CoreKind::Xray, port).await?;
             }
         }
-        if let Some(config) = &plan.singbox {
+        if let Some(config) = plan.singbox.as_ref().filter(|_| !keep_singbox) {
             let process = self.spawn(CoreKind::SingBox, config).await?;
             self.singbox = Some(process);
+            self.singbox_config = Some(config.clone());
             if let Some(port) = ready_port.filter(|_| plan.xray.is_none()) {
                 self.wait_ready(CoreKind::SingBox, port).await?;
             } else {
@@ -180,6 +197,36 @@ impl CoreManager {
             }
         }
         Ok(())
+    }
+
+    /// The local ports must be free before a core starts: if another process still listens on
+    /// one, the new core cannot bind it and exits, while the readiness check would wrongly
+    /// succeed through the other process (e.g. a core left over with an old server, so the
+    /// connection "works" but always through that server).
+    async fn ensure_ports_free(&self, ports: &[u16], was_running: bool) -> Result<()> {
+        let grace = if was_running { Duration::from_secs(3) } else { Duration::from_millis(300) };
+        if wait_ports_free(ports, grace).await.is_none() {
+            return Ok(());
+        }
+        let stopped = stop_leftover_cores(&self.paths).await;
+        if stopped > 0 {
+            self.log(crate::model::LogLevel::Warning, format!("stopped {stopped} core process(es) left over from an earlier run"));
+        }
+        if let Some(port) = wait_ports_free(ports, Duration::from_secs(3)).await {
+            bail!("local port {port} is in use by another program; close it or change the port in the settings");
+        }
+        Ok(())
+    }
+
+    fn log(&self, level: crate::model::LogLevel, message: String) {
+        tracing::warn!("{message}");
+        (self.sink)(CoreEvent::Log(LogEntry {
+            at: chrono::Utc::now(),
+            level,
+            source: crate::model::LogSource::App,
+            message,
+            request: None,
+        }));
     }
 
     async fn spawn(&self, kind: CoreKind, config: &Value) -> Result<CoreProcess> {
@@ -203,7 +250,12 @@ impl CoreManager {
             CoreKind::Xray => self.xray.as_ref().is_some_and(CoreProcess::is_alive),
             CoreKind::SingBox => self.singbox.as_ref().is_some_and(CoreProcess::is_alive),
         };
-        let ready = wait_for_port(port, Duration::from_secs(8), alive).await;
+        let ready = wait_for_port(port, Duration::from_secs(8), &alive).await && {
+            // The port answering is not enough: the core must still be running (and so be the
+            // one listening) a moment later.
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            alive()
+        };
         if !ready {
             self.stop().await;
             bail!("{} did not start listening on port {port}, see the journal", kind.label());
@@ -213,6 +265,7 @@ impl CoreManager {
 
     pub async fn stop(&mut self) {
         self.tun_active = false;
+        self.singbox_config = None;
         if let Some(mut p) = self.singbox.take() {
             p.kill().await;
         }
@@ -220,6 +273,101 @@ impl CoreManager {
             p.kill().await;
         }
     }
+}
+
+/// Stops Xray / sing-box processes started from our cores folder that this app instance did
+/// not start (left running by an earlier instance). Returns how many were stopped.
+pub async fn stop_leftover_cores(paths: &CorePaths) -> usize {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let exes: Vec<PathBuf> = [CoreKind::Xray, CoreKind::SingBox].iter().map(|k| canonical(&paths.exe(*k))).collect();
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().with_exe(UpdateKind::Always));
+    let leftovers: Vec<u32> = system
+        .processes()
+        .iter()
+        .filter(|(pid, p)| !is_own_pid(pid.as_u32()) && p.exe().is_some_and(|exe| exes.contains(&canonical(exe))))
+        .map(|(pid, _)| pid.as_u32())
+        .collect();
+    for &pid in &leftovers {
+        tracing::warn!("stopping leftover core process {pid}");
+        request_stop(pid);
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    loop {
+        system.refresh_processes(ProcessesToUpdate::Some(&leftovers.iter().map(|p| sysinfo::Pid::from_u32(*p)).collect::<Vec<_>>()), true);
+        let running: Vec<&sysinfo::Process> = leftovers.iter().filter_map(|p| system.process(sysinfo::Pid::from_u32(*p))).collect();
+        if running.is_empty() {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            for process in running {
+                process.kill();
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    leftovers.len()
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if cfg!(windows) {
+        PathBuf::from(path.to_string_lossy().to_lowercase())
+    } else {
+        path
+    }
+}
+
+/// After the TUN core stopped, waits for its adapter to disappear before a new one is created.
+#[cfg(windows)]
+async fn wait_tun_removed() {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    while adapter_exists(crate::config::singbox::TUN_INTERFACE) && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    // Routes of the removed interface go away slightly after the adapter itself.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+}
+
+#[cfg(not(windows))]
+async fn wait_tun_removed() {
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+}
+
+#[cfg(windows)]
+fn adapter_exists(name: &str) -> bool {
+    use windows::Win32::NetworkManagement::IpHelper::{
+        GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_UNICAST,
+        IP_ADAPTER_ADDRESSES_LH,
+    };
+    use windows::Win32::Networking::WinSock::AF_UNSPEC;
+    let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_SKIP_UNICAST;
+    let mut size = 32 * 1024u32;
+    for _ in 0..3 {
+        // u64 elements keep the buffer aligned for IP_ADAPTER_ADDRESSES_LH.
+        let mut buffer = vec![0u64; (size as usize).div_ceil(8)];
+        let first = buffer.as_mut_ptr().cast::<IP_ADAPTER_ADDRESSES_LH>();
+        let status = unsafe { GetAdaptersAddresses(AF_UNSPEC.0 as u32, flags, None, Some(first), &mut size) };
+        if status == 111 {
+            continue; // ERROR_BUFFER_OVERFLOW: `size` now holds the needed size
+        }
+        if status != 0 {
+            return false;
+        }
+        let mut current = first.cast_const();
+        while !current.is_null() {
+            let adapter = unsafe { &*current };
+            if unsafe { adapter.FriendlyName.to_string() }.is_ok_and(|n| n.eq_ignore_ascii_case(name)) {
+                return true;
+            }
+            current = adapter.Next;
+        }
+        return false;
+    }
+    false
 }
 
 pub fn write_config(path: &Path, config: &Value) -> Result<()> {

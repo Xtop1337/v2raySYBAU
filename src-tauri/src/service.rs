@@ -207,6 +207,12 @@ impl Service {
         self.clone().spawn_monitor();
         self.clone().spawn_subscription_updater();
 
+        // Cores still running from an earlier instance (closed by the installer, crashed) hold the
+        // local ports with an old server: stop them before anything connects.
+        let leftovers = sybau_core::runtime::stop_leftover_cores(&self.paths).await;
+        if leftovers > 0 {
+            self.log(LogLevel::Warning, format!("stopped {leftovers} core process(es) left over from an earlier run"));
+        }
         let settings = self.data.lock().await.settings.clone();
         if win::sysproxy::is_ours(settings.proxy.http_port) {
             // Left over from a crash: the proxy points at a port nothing listens on yet.
