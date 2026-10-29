@@ -11,6 +11,10 @@ on:
         description: 'Version to release, e.g. 1.0.0 (the tag v<version> is created)'
         required: true
         default: '1.0.0'
+      replace:
+        description: 'Delete an existing release and tag with this version first (rebuild it)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -52,6 +56,15 @@ jobs:
             Write-Warning 'TAURI_SIGNING_PRIVATE_KEY secret is not set: the release is built without updater signatures.'
             "args=--bundles nsis --config src-tauri/tauri.no-updater.conf.json" >> $env:GITHUB_OUTPUT
           }
+      - name: Delete the existing release
+        if: github.event_name == 'workflow_dispatch' && inputs.replace
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete $env:TAG --repo ${{ github.repository }} --cleanup-tag --yes
+          if ($LASTEXITCODE -ne 0) { Write-Warning "no release $env:TAG to delete" }
+          $global:LASTEXITCODE = 0
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
