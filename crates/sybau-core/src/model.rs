@@ -137,6 +137,14 @@ pub struct TlsOptions {
     pub short_id: String,
     /// Reality spider path (`spx`).
     pub spider_x: String,
+    /// Reality post-quantum ML-DSA-65 verify key (`pqv`).
+    pub mldsa65_verify: String,
+    /// Pinned SHA-256 of the server (or CA) certificate, hex, comma separated (`pcs`).
+    pub pinned_sha256: String,
+    /// Accept the certificate when it is valid for one of these names (`vcn`).
+    pub verify_names: String,
+    /// Encrypted Client Hello config list (`ech`).
+    pub ech_config: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

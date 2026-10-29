@@ -140,6 +140,10 @@ fn apply_stream_query(profile: &mut Profile, query: &HashMap<String, String>) {
     tls.short_id = get(query, &["sid"]).to_string();
     tls.spider_x = get(query, &["spx"]).to_string();
     tls.allow_insecure = truthy(get(query, &["allowInsecure", "insecure"]));
+    tls.mldsa65_verify = get(query, &["pqv"]).to_string();
+    tls.pinned_sha256 = get(query, &["pcs"]).to_string();
+    tls.verify_names = get(query, &["vcn"]).to_string();
+    tls.ech_config = get(query, &["ech"]).to_string();
 
     profile.flow = get(query, &["flow"]).to_string();
     profile.dns = get(query, &["dns"]).to_string();
@@ -230,6 +234,9 @@ fn parse_vmess(line: &str) -> Result<Profile> {
     profile.tls.alpn = split_list(&read("alpn"));
     profile.tls.fingerprint = read("fp");
     profile.tls.allow_insecure = truthy(&read("allowInsecure")) || truthy(&read("insecure"));
+    profile.tls.pinned_sha256 = read("pcs");
+    profile.tls.verify_names = read("vcn");
+    profile.tls.ech_config = read("ech");
     Ok(profile)
 }
 
@@ -289,6 +296,7 @@ fn parse_hysteria2(line: &str) -> Result<Profile> {
     profile.tls.sni = get(query, &["sni", "peer"]).to_string();
     profile.tls.alpn = split_list(get(query, &["alpn"]));
     profile.tls.allow_insecure = truthy(get(query, &["insecure", "allowInsecure"]));
+    profile.tls.pinned_sha256 = get(query, &["pinSHA256", "pcs"]).replace(':', "").to_ascii_lowercase();
     profile.quic.obfs = get(query, &["obfs"]).to_string();
     profile.quic.obfs_password = get(query, &["obfs-password", "obfs_password"]).to_string();
     profile.quic.hop_ports = get(query, &["mport", "ports"]).to_string();

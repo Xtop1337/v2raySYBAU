@@ -179,6 +179,14 @@ fn xray_outbound(outbound: &Value) -> Option<Profile> {
     p.tls.short_id = s(&tls, "/shortId");
     p.tls.spider_x = s(&tls, "/spiderX");
     p.tls.allow_insecure = tls.get("allowInsecure").and_then(Value::as_bool).unwrap_or(false);
+    p.tls.mldsa65_verify = s(&tls, "/mldsa65Verify");
+    p.tls.pinned_sha256 = s(&tls, "/pinnedPeerCertSha256");
+    p.tls.verify_names = s(&tls, "/verifyPeerCertByName");
+    p.tls.ech_config = s(&tls, "/echConfigList");
+    if p.tls.public_key.is_empty() {
+        // Xray 26 names the Reality public key "password".
+        p.tls.public_key = s(&tls, "/password");
+    }
     p.tls.alpn = tls
         .get("alpn")
         .and_then(Value::as_array)

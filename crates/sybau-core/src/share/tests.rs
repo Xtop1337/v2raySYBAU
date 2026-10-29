@@ -144,3 +144,21 @@ fn links_round_trip() {
     assert_eq!(again.transport.service_name, "svc");
     assert_eq!(again.transport.mode, "multi");
 }
+
+#[test]
+fn protection_parameters_round_trip() {
+    let link = "vless://id@r.com:443?security=reality&sni=a.com&fp=chrome&pbk=KEY&sid=01&pqv=VERIFY&type=tcp#R";
+    let p = parse_link(link).unwrap();
+    assert_eq!(p.tls.mldsa65_verify, "VERIFY");
+    assert_eq!(parse_link(&build_link(&p)).unwrap().tls, p.tls);
+
+    let tls = parse_link("vless://id@t.com:443?security=tls&sni=t.com&pcs=ab12&vcn=t.com&ech=AEX%2B&type=ws#T").unwrap();
+    assert_eq!(tls.tls.pinned_sha256, "ab12");
+    assert_eq!(tls.tls.verify_names, "t.com");
+    assert_eq!(tls.tls.ech_config, "AEX+");
+    assert_eq!(parse_link(&build_link(&tls)).unwrap().tls, tls.tls);
+
+    let hy = parse_link("hy2://pw@hy.com:443/?sni=hy.com&pinSHA256=AB:CD:EF#H").unwrap();
+    assert_eq!(hy.tls.pinned_sha256, "abcdef");
+    assert!(build_link(&hy).contains("pinSHA256=abcdef"));
+}

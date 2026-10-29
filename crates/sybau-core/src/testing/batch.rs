@@ -9,7 +9,7 @@ use anyhow::Result;
 use futures_util::stream::{self, StreamExt};
 use tokio_util::sync::CancellationToken;
 
-use super::{http_delay, icmp_ping, tcp_ping, to_ms, DelayResult};
+use super::{http_delay, icmp_ping, pin_insecure, tcp_ping, to_ms, DelayResult};
 use crate::config::{singbox, xray};
 use crate::model::{Profile, TestMethod};
 use crate::runtime::{free_ports, wait_for_port, write_config, CoreKind, CorePaths, CoreProcess, EventSink};
@@ -76,7 +76,8 @@ pub async fn run_batch(
             Ok(())
         }
         TestMethod::Real => {
-            let (native, xray_profiles): (Vec<_>, Vec<_>) = profiles.into_iter().partition(|p| p.protocol.needs_singbox());
+            let (native, mut xray_profiles): (Vec<_>, Vec<_>) = profiles.into_iter().partition(|p| p.protocol.needs_singbox());
+            pin_insecure(&mut xray_profiles, settings.advanced.allow_insecure, options.timeout).await;
             for (kind, list) in [(CoreKind::Xray, xray_profiles), (CoreKind::SingBox, native)] {
                 if list.is_empty() {
                     continue;

@@ -17,7 +17,7 @@ use sybau_core::runtime::{core_version, CoreEvent, CoreKind, CoreManager, CorePa
 use sybau_core::settings::{ConnectionMode, MonitorScope, Settings};
 use sybau_core::storage::Storage;
 use sybau_core::subscription;
-use sybau_core::testing::{self, run_batch, BatchOptions, DelayResult, NodeStats, NodeWindow};
+use sybau_core::testing::{self, needs_pin, pin_insecure, run_batch, BatchOptions, DelayResult, NodeStats, NodeWindow};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -512,6 +512,7 @@ impl Service {
     pub async fn export_core_config(&self, id: Uuid, path: &Path) -> Result<()> {
         let profile = self.profile(id).await?;
         let settings = self.data.lock().await.settings.clone();
+        let profile = self.pin_certificate(profile, &settings).await;
         let plan = config::plan(&profile, &settings, &self.config_env());
         let value = plan.xray.or(plan.singbox).ok_or_else(|| anyhow!("nothing to export"))?;
         std::fs::write(path, config::to_pretty(&value))?;
@@ -624,6 +625,24 @@ impl Service {
         ConfigEnv { geo_available: self.paths.geo_available(), clash_api_port: self.clash_api_port, ..ConfigEnv::default() }
     }
 
+    /// Xray 26.10 has no `allowInsecure`: a server marked insecure gets its current certificate
+    /// pinned instead, so a certificate swapped later (interception) is still rejected.
+    async fn pin_certificate(&self, profile: Profile, settings: &Settings) -> Profile {
+        let mut list = [profile];
+        if needs_pin(&list[0], settings.advanced.allow_insecure) {
+            let failed = pin_insecure(&mut list, settings.advanced.allow_insecure, Duration::from_secs(5)).await;
+            match failed.first() {
+                Some(name) => self.log(LogLevel::Warning, format!("«{name}»: could not read the server certificate to pin it")),
+                None => self.log(
+                    LogLevel::Info,
+                    format!("«{}»: certificate pinned (sha256 {})", list[0].display_name(), list[0].tls.pinned_sha256),
+                ),
+            }
+        }
+        let [profile] = list;
+        profile
+    }
+
     pub async fn connect(&self, id: Uuid) -> Result<ConnectionInfo> {
         let (profile, settings) = {
             let data = self.data.lock().await;
@@ -634,6 +653,7 @@ impl Service {
         if tun && cfg!(windows) && !win::is_elevated() {
             bail!("TUN_NEEDS_ADMIN");
         }
+        let profile = self.pin_certificate(profile, &settings).await;
         let plan = config::plan(&profile, &settings, &self.config_env());
         {
             let mut conn = self.conn.lock().await;

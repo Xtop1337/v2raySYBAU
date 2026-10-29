@@ -25,6 +25,10 @@ export interface TlsOptions {
   publicKey: string;
   shortId: string;
   spiderX: string;
+  mldsa65Verify: string;
+  pinnedSha256: string;
+  verifyNames: string;
+  echConfig: string;
 }
 
 export interface QuicOptions {

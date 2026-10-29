@@ -368,13 +368,23 @@ fn stream_settings(profile: &Profile, settings: &Settings) -> Value {
     match tls.security {
         Security::Tls => {
             stream["security"] = json!("tls");
+            // Xray 26.10 removed `allowInsecure`: "insecure" servers are trusted through the
+            // certificate pinned by `certpin` before the core starts (see testing::certpin).
             let mut tls_settings = json!({
                 "serverName": server_name,
-                "allowInsecure": tls.allow_insecure || settings.advanced.allow_insecure,
                 "fingerprint": non_empty(&tls.fingerprint, "chrome")
             });
             if !tls.alpn.is_empty() {
                 tls_settings["alpn"] = json!(tls.alpn);
+            }
+            // Fingerprints are often copied as `AB:CD:...`; Xray wants plain hex.
+            let pinned = tls.pinned_sha256.replace([':', ' '], "").to_ascii_lowercase();
+            for (key, value) in
+                [("pinnedPeerCertSha256", &pinned), ("verifyPeerCertByName", &tls.verify_names), ("echConfigList", &tls.ech_config)]
+            {
+                if !value.trim().is_empty() {
+                    tls_settings[key] = json!(value.trim());
+                }
             }
             stream["tlsSettings"] = tls_settings;
         }
@@ -387,6 +397,9 @@ fn stream_settings(profile: &Profile, settings: &Settings) -> Value {
                 "shortId": tls.short_id,
                 "spiderX": non_empty(&tls.spider_x, "/")
             });
+            if !tls.mldsa65_verify.trim().is_empty() {
+                stream["realitySettings"]["mldsa65Verify"] = json!(tls.mldsa65_verify.trim());
+            }
         }
         Security::None => {}
     }

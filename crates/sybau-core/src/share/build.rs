@@ -70,6 +70,10 @@ fn standard_link(scheme: &str, user: &str, profile: &Profile, include_encryption
         ("mode", t.mode.clone()),
         ("extra", t.extra.clone()),
         ("seed", t.seed.clone()),
+        ("pqv", tls.mldsa65_verify.clone()),
+        ("pcs", tls.pinned_sha256.clone()),
+        ("vcn", tls.verify_names.clone()),
+        ("ech", tls.ech_config.clone()),
         ("allowInsecure", if tls.allow_insecure { "1".into() } else { String::new() }),
     ]);
     format!("{scheme}://{}@{}{}{}", percent_encode(user), host_port(profile), query_string(&pairs), fragment(profile))
@@ -99,6 +103,9 @@ fn vmess_link(profile: &Profile) -> String {
         "sni": profile.tls.sni,
         "alpn": profile.tls.alpn.join(","),
         "fp": profile.tls.fingerprint,
+        "pcs": profile.tls.pinned_sha256,
+        "vcn": profile.tls.verify_names,
+        "ech": profile.tls.ech_config,
     });
     format!("vmess://{}", b64_encode(value.to_string().as_bytes()))
 }
@@ -116,6 +123,7 @@ fn hysteria2_link(profile: &Profile) -> String {
         ("sni", profile.tls.sni.clone()),
         ("alpn", profile.tls.alpn.join(",")),
         ("insecure", if profile.tls.allow_insecure { "1".into() } else { String::new() }),
+        ("pinSHA256", profile.tls.pinned_sha256.clone()),
         ("obfs", q.obfs.clone()),
         ("obfs-password", q.obfs_password.clone()),
         ("mport", q.hop_ports.clone()),

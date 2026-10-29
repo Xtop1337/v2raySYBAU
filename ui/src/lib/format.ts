@@ -88,7 +88,7 @@ export function emptyProfile(): Profile {
     flow: '',
     plugin: '',
     transport: { network: 'tcp', headerType: '', host: '', path: '', serviceName: '', mode: '', extra: '', seed: '' },
-    tls: { security: 'tls', sni: '', alpn: [], fingerprint: 'chrome', allowInsecure: false, publicKey: '', shortId: '', spiderX: '' },
+    tls: { security: 'tls', sni: '', alpn: [], fingerprint: 'chrome', allowInsecure: false, publicKey: '', shortId: '', spiderX: '', mldsa65Verify: '', pinnedSha256: '', verifyNames: '', echConfig: '' },
     quic: { obfs: '', obfsPassword: '', upMbps: 0, downMbps: 0, hopPorts: '', congestionControl: '', udpRelayMode: '' },
     dns: '',
     delay: { ms: null, method: null, testedAt: null },

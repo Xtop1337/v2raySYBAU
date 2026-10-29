@@ -1,6 +1,7 @@
 //! Latency measurement: TCP connect, ICMP echo and v2rayNG-style "real delay" through the proxy.
 
 mod batch;
+mod certpin;
 mod icmp;
 mod monitor;
 
@@ -12,6 +13,7 @@ use uuid::Uuid;
 
 use crate::model::TestMethod;
 pub use batch::{run_batch, BatchOptions};
+pub use certpin::{leaf_sha256, needs_pin, pin_insecure};
 pub use icmp::icmp_ping;
 pub use monitor::{NodeStats, NodeWindow};
 

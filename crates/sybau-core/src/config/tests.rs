@@ -201,3 +201,36 @@ fn old_settings_default_to_singbox_engine() {
     assert_eq!(settings.tun.engine, crate::settings::TunEngine::SingBox);
     assert_eq!(settings.tun.app_mode, TunAppMode::Include);
 }
+
+#[test]
+fn tls_protections_reach_xray_and_allow_insecure_is_never_emitted() {
+    let mut settings = Settings::default();
+    settings.advanced.allow_insecure = true;
+    let tls = parse_link("trojan://pw@t.com:443?security=tls&sni=t.com&allowInsecure=1&pcs=AB:12,cd34&vcn=t.com&ech=AEX%2B#T").unwrap();
+    let config = xray::build_client(&tls, &settings, &ConfigEnv::default(), XrayMode::Proxy);
+    let tls_settings = &config["outbounds"][0]["streamSettings"]["tlsSettings"];
+    assert_eq!(tls_settings["pinnedPeerCertSha256"], "ab12,cd34");
+    assert_eq!(tls_settings["verifyPeerCertByName"], "t.com");
+    assert_eq!(tls_settings["echConfigList"], "AEX+");
+    // Removed in Xray 26.10: a config containing it does not start.
+    assert!(!config.to_string().contains("allowInsecure"));
+
+    let pq = parse_link("vless://id@r.com:443?security=reality&sni=a.com&pbk=KEY&sid=01&pqv=VERIFY&type=xhttp#R").unwrap();
+    let config = xray::build_client(&pq, &Settings::default(), &ConfigEnv::default(), XrayMode::Proxy);
+    assert_eq!(config["outbounds"][0]["streamSettings"]["realitySettings"]["mldsa65Verify"], "VERIFY");
+}
+
+#[test]
+fn insecure_profiles_need_a_pinned_certificate() {
+    use crate::testing::needs_pin;
+    let insecure = parse_link("trojan://pw@t.com:443?security=tls&allowInsecure=1#T").unwrap();
+    assert!(needs_pin(&insecure, false));
+    let pinned = parse_link("trojan://pw@t.com:443?security=tls&allowInsecure=1&pcs=ab#T").unwrap();
+    assert!(!needs_pin(&pinned, false));
+    let secure = parse_link("trojan://pw@t.com:443?security=tls#T").unwrap();
+    assert!(!needs_pin(&secure, false));
+    assert!(needs_pin(&secure, true), "the global switch counts too");
+    assert!(!needs_pin(&reality(), true), "Reality has its own authentication");
+    let hy = parse_link("hy2://pw@hy.example.com:443/?insecure=1#HY").unwrap();
+    assert!(!needs_pin(&hy, true), "sing-box protocols are not pinned this way");
+}
