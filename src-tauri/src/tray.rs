@@ -8,7 +8,7 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
-use crate::service::{ConnectionInfo, Service};
+use crate::service::{ConnectionCheck, ConnectionInfo, Service};
 
 const TRAY_ID: &str = "main";
 
@@ -144,6 +144,37 @@ pub fn refresh(app: &AppHandle, info: &ConnectionInfo) {
         };
         let _ = tray.set_tooltip(Some(tooltip));
     });
+}
+
+/// A Windows notification, shown only while the window is hidden (otherwise the app shows its own).
+fn notify(app: &AppHandle, title: &str, body: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let visible = app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false));
+    if !visible {
+        let _ = app.notification().builder().title(title).body(body).show();
+    }
+}
+
+pub fn notify_connecting(app: &AppHandle, name: &str) {
+    notify(app, label(app, "Создаётся туннель…", "Creating the tunnel…"), name);
+}
+
+pub fn notify_check(app: &AppHandle, check: &ConnectionCheck) {
+    let exit = check.exit.as_ref().map(|e| if e.country.is_empty() { e.ip.clone() } else { format!("{} ({})", e.ip, e.country) });
+    let ru = ru(app);
+    let (title, body) = match (check.problem, ru) {
+        (None, true) => ("Туннель создан успешно".to_string(), format!("{} · IP {}", check.profile_name, exit.unwrap_or_default())),
+        (None, false) => ("Tunnel created".to_string(), format!("{} · IP {}", check.profile_name, exit.unwrap_or_default())),
+        (Some("no-traffic"), true) => {
+            ("Подключено, но трафик не проходит".to_string(), format!("Сервер «{}» не отвечает", check.profile_name))
+        }
+        (Some("no-traffic"), false) => {
+            ("Connected, but no traffic".to_string(), format!("Server «{}» does not respond", check.profile_name))
+        }
+        (Some(_), true) => ("Трафик идёт мимо туннеля".to_string(), "Откройте приложение, чтобы узнать подробности".to_string()),
+        (Some(_), false) => ("Traffic bypasses the tunnel".to_string(), "Open the app for details".to_string()),
+    };
+    notify(app, &title, &body);
 }
 
 pub fn set_speed(app: &AppHandle, sample: TrafficSample) {

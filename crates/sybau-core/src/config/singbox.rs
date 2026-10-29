@@ -269,7 +269,8 @@ pub fn outbound(profile: &Profile, settings: &Settings) -> Value {
     let mut tls_value = json!({
         "enabled": true,
         "server_name": if tls.sni.is_empty() { profile.address.clone() } else { tls.sni.clone() },
-        "insecure": tls.allow_insecure || settings.advanced.allow_insecure,
+        // sing-box pins public keys, not certificate hashes: a pinned profile falls back to insecure.
+        "insecure": tls.allow_insecure || settings.advanced.allow_insecure || !tls.pinned_sha256.is_empty(),
         "alpn": if tls.alpn.is_empty() { vec!["h3".to_string()] } else { tls.alpn.clone() }
     });
     match profile.protocol {

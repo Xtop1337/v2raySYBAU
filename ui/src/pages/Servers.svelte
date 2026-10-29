@@ -11,10 +11,12 @@
     importFiles,
     importText,
     runTest,
+    selectServer,
+    setConnectionMode,
     toggleConnection,
   } from '../lib/actions';
   import { api } from '../lib/api';
-  import { delayClass, emptyProfile, flag, protocolLabel, speed, transportLabel } from '../lib/format';
+  import { delayClass, emptyProfile, flag, flagOfCode, protocolLabel, speed, transportLabel } from '../lib/format';
   import { t } from '../lib/i18n.svelte';
   import { app, errorText, toast } from '../lib/store.svelte';
   import type { Profile, TestMethod } from '../lib/types';
@@ -37,19 +39,27 @@
   );
   const selected = $derived(app.selection.filter((id) => visible.some((p) => p.id === id)));
   const focused = $derived(selected.length ? selected[selected.length - 1] : null);
-  const willDisconnect = $derived(app.connection.connected && (!focused || focused === app.connection.profileId));
+  const chosen = $derived(app.profiles.find((p) => p.id === app.selectedId) ?? null);
+  const tunMode = $derived(app.settings?.proxy.mode === 'tun');
 
   $effect(() => {
     if (app.selectedGroup !== 'all' && !groups.includes(app.selectedGroup)) app.selectedGroup = 'all';
   });
 
-  function targets(): string[] | null {
-    if (selected.length) return selected;
+  // The whole list on screen (all servers, or the open subscription / search result).
+  function allTargets(): string[] | null {
     return app.selectedGroup === 'all' && !search ? null : visible.map((p) => p.id);
   }
 
+  // The server chosen in the list, or the Ctrl/Shift selection when several are selected.
+  const chosenTargets = $derived(selected.length > 1 ? selected : chosen ? [chosen.id] : []);
+
   function test(method: TestMethod) {
-    runTest(targets(), method);
+    runTest(allTargets(), method);
+  }
+
+  function testChosen() {
+    if (chosenTargets.length) runTest(chosenTargets, app.settings?.test.method ?? 'real');
   }
 
   function onRowClick(event: MouseEvent, profile: Profile) {
@@ -64,6 +74,7 @@
     } else {
       app.selection = [profile.id];
       lastClicked = profile.id;
+      selectServer(profile.id);
     }
   }
 
@@ -91,7 +102,8 @@
       app.selection = visible.map((p) => p.id);
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
       event.preventDefault();
-      test(app.settings?.test.method ?? 'real');
+      if (event.shiftKey) testChosen();
+      else test(app.settings?.test.method ?? 'real');
     } else if (event.key === 'Delete' && selected.length) {
       deleteProfiles(selected);
     } else if (event.key === 'Enter' && focused) {
@@ -141,29 +153,57 @@
     <div class="connect-card">
       <div class="conn-state">
         <span class="dot" class:on={app.connection.connected} class:busy={app.connecting}></span>
-        <div>
+        <div class="conn-text">
           <div class="conn-title">
             {app.connecting ? t('status.connecting') : app.connection.connected ? t('status.connected') : t('status.disconnected')}
           </div>
-          <div class="faint conn-sub">
-            {#if app.connection.connected}
+          <div class="faint conn-sub" data-testid="chosen-server">
+            {#if app.connection.connected && !app.connecting}
               {app.connection.profileName} · {app.connection.mode === 'tun' ? t('status.mode.tun') : t('status.mode.proxy')}
+              ·
+              {#if app.check?.exit}
+                <span data-testid="exit-ip">{t('connect.exit', { ip: `${flagOfCode(app.check.exit.country)} ${app.check.exit.ip}`.trim() })}</span>
+              {:else if !app.check}
+                {t('connect.checking')}
+              {/if}
               {#if app.settings?.general.showSpeed}· ↑ {speed(app.traffic.up)} ↓ {speed(app.traffic.down)}{/if}
             {:else}
-              {app.profiles.find((p) => p.id === (focused ?? app.settings?.lastProfileId))?.name ?? ''}
+              {chosen ? `${chosen.name.match(/[\u{1F1E6}-\u{1F1FF}]{2}/u) ? '' : (flag(chosen.name) ?? '')} ${chosen.name || chosen.address}`.trim() : t('servers.noServerSelected')}
             {/if}
           </div>
         </div>
       </div>
+      {#if app.settings}
+        <div class="mode">
+          <div class="segmented" role="radiogroup" aria-label={t('settings.mode')}>
+            <button class:active={!tunMode} disabled={app.connecting} onclick={() => setConnectionMode('proxy')}>{t('servers.mode.proxy')}</button>
+            <button class:active={tunMode} disabled={app.connecting} onclick={() => setConnectionMode('tun')}>TUN</button>
+          </div>
+          {#if tunMode}
+            <select
+              class="select engine"
+              title={t('servers.engineHint')}
+              aria-label={t('settings.tunEngine')}
+              value={app.settings.tun.engine}
+              disabled={app.connecting}
+              onchange={(e) => setConnectionMode('tun', e.currentTarget.value as 'singbox' | 'xray')}
+            >
+              <option value="singbox">sing-box</option>
+              <option value="xray">Xray</option>
+            </select>
+          {/if}
+        </div>
+      {/if}
       <button
         class="btn connect-btn"
-        class:primary={!willDisconnect}
-        class:stop={willDisconnect}
+        class:primary={!app.connection.connected}
+        class:stop={app.connection.connected}
         disabled={app.connecting || !app.profiles.length}
-        onclick={() => toggleConnection(focused)}
+        data-testid="connect-button"
+        onclick={() => toggleConnection()}
       >
         <Icon name="power" size={17} />
-        {willDisconnect ? t('servers.disconnect') : t('servers.connect')}
+        {app.connecting ? t('status.connecting') : app.connection.connected ? t('servers.disconnect') : t('servers.connect')}
       </button>
     </div>
   </div>
@@ -194,10 +234,14 @@
       </div>
       <button class="btn small" onclick={() => api.cancelTest()}><Icon name="stop" size={14} />{t('servers.stopTest')}</button>
     {:else}
-      <button class="btn small primary" onclick={() => test('real')} title="Ctrl+R"><Icon name="zap" size={14} />{t('servers.testReal')}</button>
+      <span class="faint label">{app.selectedGroup === 'all' && !search ? t('servers.testAll') : t('servers.testList', { n: visible.length })}</span>
+      <button class="btn small primary" onclick={() => test('real')} title="Ctrl+R" data-testid="test-all"><Icon name="zap" size={14} />{t('servers.testReal')}</button>
       <button class="btn small" onclick={() => test('tcp')}>{t('servers.testTcp')}</button>
       <button class="btn small" onclick={() => test('icmp')}>{t('servers.testIcmp')}</button>
-      <span class="faint hint">{selected.length ? t('servers.selected', { n: selected.length }) : ''}</span>
+      <span class="sep"></span>
+      <button class="btn small" disabled={!chosenTargets.length} onclick={testChosen} title="Ctrl+Shift+R" data-testid="test-chosen">
+        <Icon name="zap" size={14} />{selected.length > 1 ? t('servers.testSelected', { n: selected.length }) : t('servers.testChosen')}
+      </button>
     {/if}
     <div class="spacer"></div>
     <button class="btn small" onclick={() => api.sortByDelay()}><Icon name="sort" size={14} />{t('servers.sortByDelay')}</button>
@@ -238,6 +282,7 @@
           <div
             class="tr"
             class:selected={app.selection.includes(p.id)}
+            class:chosen={app.selectedId === p.id}
             class:active
             role="row"
             tabindex="-1"
@@ -247,7 +292,7 @@
             oncontextmenu={(e) => onContextMenu(e, p)}
           >
             <span class="c-name">
-              <span class="avatar">{flag(p.name) ?? protocolLabel[p.protocol].slice(0, 1)}</span>
+              <span class="avatar" class:flag={flag(p.name)}>{flag(p.name) ?? protocolLabel[p.protocol].slice(0, 1)}</span>
               <span class="name-text">
                 <span class="name">{p.name.replace(/^\s*(?:[\u{1F1E6}-\u{1F1FF}]){2}\s*/u, '') || p.address}</span>
                 {#if app.selectedGroup === 'all' && groups.length > 1}<span class="faint group">{p.group}</span>{/if}
@@ -338,8 +383,50 @@
     min-width: 0;
   }
 
+  .conn-text {
+    min-width: 0;
+  }
+
   .conn-title {
     font-weight: 600;
+  }
+
+  .mode {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .segmented {
+    display: inline-flex;
+    padding: 3px;
+    gap: 2px;
+    border-radius: 9px;
+    background: var(--surface-3);
+  }
+
+  .segmented button {
+    border: none;
+    background: none;
+    padding: 5px 12px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+
+  .segmented button.active {
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .segmented button:disabled {
+    cursor: default;
+  }
+
+  .engine {
+    height: 32px;
   }
 
   .conn-sub {
@@ -440,8 +527,15 @@
     color: var(--text);
   }
 
-  .hint {
+  .label {
     font-size: 12.5px;
+  }
+
+  .sep {
+    width: 1px;
+    height: 18px;
+    margin: 0 4px;
+    background: var(--border);
   }
 
   .progress {
@@ -586,6 +680,10 @@
     box-shadow: inset 3px 0 0 var(--success);
   }
 
+  .tr.chosen .avatar {
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+
   .c-name {
     display: flex;
     align-items: center;
@@ -604,6 +702,11 @@
     font-size: 15px;
     font-weight: 600;
     color: var(--text-2);
+  }
+
+  .avatar.flag {
+    font-size: 19px;
+    font-weight: 400;
   }
 
   .name-text {

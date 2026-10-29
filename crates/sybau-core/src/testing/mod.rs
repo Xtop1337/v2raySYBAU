@@ -1,6 +1,7 @@
 //! Latency measurement: TCP connect, ICMP echo and v2rayNG-style "real delay" through the proxy.
 
 mod batch;
+mod certpin;
 mod icmp;
 mod monitor;
 
@@ -12,6 +13,7 @@ use uuid::Uuid;
 
 use crate::model::TestMethod;
 pub use batch::{run_batch, BatchOptions};
+pub use certpin::{leaf_sha256, needs_pin, peer_cert, pin_insecure, PeerCert};
 pub use icmp::icmp_ping;
 pub use monitor::{NodeStats, NodeWindow};
 
@@ -57,6 +59,50 @@ pub async fn http_delay(socks_port: u16, url: &str, timeout: Duration) -> Option
     Some(elapsed)
 }
 
+/// Public address the internet sees (and its country), as reported by an IP echo service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExitInfo {
+    pub ip: String,
+    /// ISO 3166 alpha-2 code, empty when unknown.
+    pub country: String,
+}
+
+const TRACE_URLS: [&str; 2] = ["https://www.cloudflare.com/cdn-cgi/trace", "https://1.1.1.1/cdn-cgi/trace"];
+
+/// Asks Cloudflare which address the request came from. `proxy` is a proxy URL
+/// (`socks5h://...`, `http://...`), or `None` for a request that takes the system route
+/// (in TUN mode that is the tunnel). System proxy settings are never used implicitly.
+pub async fn exit_info(proxy: Option<&str>, timeout: Duration) -> Option<ExitInfo> {
+    let mut builder = reqwest::Client::builder().timeout(timeout).connect_timeout(timeout).pool_max_idle_per_host(0).no_proxy();
+    if let Some(proxy) = proxy {
+        builder = builder.proxy(reqwest::Proxy::all(proxy).ok()?);
+    }
+    let client = builder.build().ok()?;
+    // SYBAU_TRACE_URL points the check at another trace service (used by the UI tests).
+    let custom = std::env::var("SYBAU_TRACE_URL").ok();
+    let urls: Vec<&str> = match &custom {
+        Some(url) => vec![url.as_str()],
+        None => TRACE_URLS.to_vec(),
+    };
+    for url in urls {
+        let Ok(response) = client.get(url).header("User-Agent", "Mozilla/5.0").send().await else {
+            continue;
+        };
+        if let Some(info) = response.text().await.ok().as_deref().and_then(parse_trace) {
+            return Some(info);
+        }
+    }
+    None
+}
+
+fn parse_trace(body: &str) -> Option<ExitInfo> {
+    let field = |name: &str| body.lines().find_map(|l| l.strip_prefix(name).and_then(|v| v.strip_prefix('='))).map(str::trim);
+    let ip = field("ip").filter(|ip| ip.parse::<std::net::IpAddr>().is_ok())?;
+    let country = field("loc").filter(|c| c.len() == 2 && *c != "XX").unwrap_or("");
+    Some(ExitInfo { ip: ip.to_string(), country: country.to_ascii_uppercase() })
+}
+
 pub fn to_ms(duration: Option<Duration>) -> i64 {
     duration.map_or(-1, |d| d.as_millis().max(1) as i64)
 }
@@ -64,6 +110,14 @@ pub fn to_ms(duration: Option<Duration>) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_cloudflare_trace() {
+        let body = "fl=12f\nh=www.cloudflare.com\nip=203.0.113.7\nts=1.2\nloc=NL\ntls=TLSv1.3\n";
+        assert_eq!(parse_trace(body), Some(ExitInfo { ip: "203.0.113.7".into(), country: "NL".into() }));
+        assert_eq!(parse_trace("ip=2001:db8::1\nloc=XX").unwrap().country, "");
+        assert_eq!(parse_trace("<html>blocked</html>"), None);
+    }
 
     #[tokio::test]
     async fn tcp_ping_local_listener() {

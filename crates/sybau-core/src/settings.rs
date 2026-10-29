@@ -95,7 +95,7 @@ impl Default for ProxySettings {
             socks_port: 10808,
             http_port: 10809,
             system_proxy: true,
-            bypass: "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.2*;172.30.*;172.31.*;192.168.*;<local>".into(),
+            bypass: "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*;<local>".into(),
             allow_lan: false,
         }
     }
@@ -113,9 +113,21 @@ pub enum TunAppMode {
     Exclude,
 }
 
+/// Which core owns the virtual adapter in TUN mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TunEngine {
+    /// sing-box TUN forwarding to the local Xray SOCKS inbound.
+    #[default]
+    SingBox,
+    /// Xray's built-in TUN inbound (Xray 26+), no sing-box involved.
+    Xray,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TunSettings {
+    pub engine: TunEngine,
     pub app_mode: TunAppMode,
     /// Executable names such as `chrome.exe`, `Telegram.exe`.
     pub apps: Vec<String>,
@@ -127,7 +139,14 @@ pub struct TunSettings {
 
 impl Default for TunSettings {
     fn default() -> Self {
-        TunSettings { app_mode: TunAppMode::All, apps: Vec::new(), stack: "mixed".into(), mtu: 9000, strict_route: true }
+        TunSettings {
+            engine: TunEngine::SingBox,
+            app_mode: TunAppMode::All,
+            apps: Vec::new(),
+            stack: "mixed".into(),
+            mtu: 9000,
+            strict_route: true,
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { openUrl } from '@tauri-apps/plugin-opener';
   import Icon from '../components/Icon.svelte';
+  import Logo from '../components/Logo.svelte';
   import { api } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
   import { app, errorText, toast } from '../lib/store.svelte';
@@ -34,7 +35,7 @@
 
 <div class="page">
   <div class="hero card">
-    <img src="/icon.svg" alt="" width="64" height="64" />
+    <Logo size={72} />
     <div>
       <h1>V2Ray Sybau</h1>
       <div class="muted">{t('about.version', { v: app.appVersion })}</div>

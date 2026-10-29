@@ -7,7 +7,9 @@ use std::time::Duration;
 use serde_json::json;
 use sybau_core::config::{self, ConfigEnv};
 use sybau_core::model::TestMethod;
-use sybau_core::runtime::{free_ports, CoreEvent, CoreKind, CoreManager, CorePaths, CoreProcess, TrafficMonitor, TrafficSample};
+use sybau_core::runtime::{
+    free_ports, CoreEvent, CoreKind, CoreManager, CorePaths, CoreProcess, StartOptions, TrafficMonitor, TrafficSample,
+};
 use sybau_core::settings::{RoutingPreset, Settings};
 use sybau_core::share::parse_link;
 use sybau_core::testing::{http_delay, run_batch, BatchOptions, DelayResult};
@@ -53,7 +55,8 @@ async fn batch_test_connect_and_traffic() {
             {"listen": "127.0.0.1", "port": vmess_port, "protocol": "vmess", "settings": {"clients": [{"id": UUID}]}},
             {"listen": "127.0.0.1", "port": ss_port, "protocol": "shadowsocks", "settings": {"method": "aes-128-gcm", "password": "secret", "network": "tcp,udp"}}
         ],
-        "outbounds": [{"protocol": "freedom"}]
+        // Xray 26.10+ blocks private targets for VLESS/VMess/SS inbounds unless allowed.
+        "outbounds": [{"protocol": "freedom", "settings": {"finalRules": [{"action": "allow", "ip": ["127.0.0.0/8"]}]}}]
     });
     let server_file = work.path().join("server.json");
     std::fs::write(&server_file, server.to_string()).unwrap();
@@ -151,7 +154,7 @@ async fn batch_test_connect_and_traffic() {
     );
     let env = ConfigEnv { geo_available: false, ..ConfigEnv::default() };
     let plan = config::plan(&profiles[0], &settings, &env);
-    manager.start(&plan, Some(settings.proxy.socks_port)).await.unwrap();
+    manager.start(&plan, &StartOptions::for_plan(&plan, &settings)).await.unwrap();
     assert!(manager.is_running());
 
     let samples: Arc<Mutex<Vec<TrafficSample>>> = Arc::default();
@@ -169,7 +172,43 @@ async fn batch_test_connect_and_traffic() {
     let access = access.lock().unwrap().clone();
     assert!(access.iter().any(|a| a == &format!("127.0.0.1:{target} proxy")), "{access:?}");
 
+    // Switch to another location while connected: same local ports, new server B.
+    let b_port = free_ports(1).unwrap()[0];
+    let b_config = json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{"listen": "127.0.0.1", "port": b_port, "protocol": "vless", "settings": {"clients": [{"id": UUID}], "decryption": "none"}}],
+        "outbounds": [{"protocol": "freedom", "settings": {"finalRules": [{"action": "allow", "ip": ["127.0.0.0/8"]}]}}]
+    });
+    let b_file = work.path().join("server-b.json");
+    std::fs::write(&b_file, b_config.to_string()).unwrap();
+    let b_logs: Arc<Mutex<Vec<String>>> = Arc::default();
+    let b_sink = b_logs.clone();
+    let mut server_b = CoreProcess::spawn(
+        CoreKind::Xray,
+        &cores.join(CoreKind::Xray.exe_name()),
+        &["run".into(), "-c".into(), b_file.display().to_string()],
+        &cores,
+        Arc::new(move |e| {
+            if let CoreEvent::Log(entry) = e {
+                b_sink.lock().unwrap().push(entry.message);
+            }
+        }),
+    )
+    .unwrap();
+    assert!(sybau_core::runtime::wait_for_port(b_port, Duration::from_secs(5), || true).await);
+    let profile_b = parse_link(&format!("vless://{UUID}@127.0.0.1:{b_port}?type=tcp#B")).unwrap();
+    let plan_b = config::plan(&profile_b, &settings, &env);
+    manager.start(&plan_b, &StartOptions::for_plan(&plan_b, &settings)).await.unwrap();
+    assert!(http_delay(settings.proxy.socks_port, &settings.test.url, Duration::from_secs(3)).await.is_some());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        b_logs.lock().unwrap().iter().any(|l| l.contains(&format!("127.0.0.1:{target}"))),
+        "server B saw no traffic: {:?}",
+        b_logs.lock().unwrap()
+    );
+
     manager.stop().await;
     assert!(!manager.is_running());
     server.kill().await;
+    server_b.kill().await;
 }

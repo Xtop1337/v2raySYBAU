@@ -13,11 +13,13 @@ use sybau_core::config::{self, ConfigEnv};
 use sybau_core::import::{dedupe, import_text, ImportResult};
 use sybau_core::logs::Journal;
 use sybau_core::model::{DelayInfo, LogEntry, LogLevel, Profile, Subscription, TestMethod};
-use sybau_core::runtime::{core_version, CoreEvent, CoreKind, CoreManager, CorePaths, TrafficMonitor, TrafficSample};
-use sybau_core::settings::{ConnectionMode, MonitorScope, Settings};
+use sybau_core::runtime::{core_version, CoreEvent, CoreKind, CoreManager, CorePaths, StartOptions, TrafficMonitor, TrafficSample};
+use sybau_core::settings::{ConnectionMode, MonitorScope, RoutingPreset, Settings};
 use sybau_core::storage::Storage;
 use sybau_core::subscription;
-use sybau_core::testing::{self, run_batch, BatchOptions, DelayResult, NodeStats, NodeWindow};
+use sybau_core::testing::{
+    self, exit_info, needs_pin, pin_insecure, run_batch, BatchOptions, DelayResult, ExitInfo, NodeStats, NodeWindow,
+};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -58,6 +60,21 @@ pub struct ConnectionInfo {
     pub since: Option<DateTime<Utc>>,
     pub system_proxy: bool,
     pub core: Option<&'static str>,
+}
+
+/// Result of the traffic check made right after connecting (event `connection-check`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionCheck {
+    pub profile_id: Uuid,
+    pub profile_name: String,
+    pub mode: ConnectionMode,
+    /// Address and country the internet sees through the connection.
+    pub exit: Option<ExitInfo>,
+    /// `None` when traffic goes through the server; otherwise `no-traffic`, `direct`
+    /// (the exit address is the user's own) or `system-proxy` (Windows ignores our proxy).
+    pub problem: Option<&'static str>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -512,6 +529,7 @@ impl Service {
     pub async fn export_core_config(&self, id: Uuid, path: &Path) -> Result<()> {
         let profile = self.profile(id).await?;
         let settings = self.data.lock().await.settings.clone();
+        let profile = self.pin_certificate(profile, &settings).await;
         let plan = config::plan(&profile, &settings, &self.config_env());
         let value = plan.xray.or(plan.singbox).ok_or_else(|| anyhow!("nothing to export"))?;
         std::fs::write(path, config::to_pretty(&value))?;
@@ -624,6 +642,26 @@ impl Service {
         ConfigEnv { geo_available: self.paths.geo_available(), clash_api_port: self.clash_api_port, ..ConfigEnv::default() }
     }
 
+    /// Xray 26.10 has no `allowInsecure`: a server marked insecure gets its current certificate
+    /// pinned instead, so a certificate swapped later (interception) is still rejected.
+    async fn pin_certificate(&self, profile: Profile, settings: &Settings) -> Profile {
+        let mut list = [profile];
+        if needs_pin(&list[0], settings.advanced.allow_insecure) {
+            let failed = pin_insecure(&mut list, settings.advanced.allow_insecure, Duration::from_secs(5)).await;
+            match failed.first() {
+                Some(name) => self.log(LogLevel::Warning, format!("«{name}»: could not read the server certificate to pin it")),
+                None if list[0].tls.pinned_sha256.is_empty() => self
+                    .log(LogLevel::Info, format!("«{}»: the server certificate is valid, it is checked normally", list[0].display_name())),
+                None => self.log(
+                    LogLevel::Info,
+                    format!("«{}»: certificate pinned (sha256 {})", list[0].display_name(), list[0].tls.pinned_sha256),
+                ),
+            }
+        }
+        let [profile] = list;
+        profile
+    }
+
     pub async fn connect(&self, id: Uuid) -> Result<ConnectionInfo> {
         let (profile, settings) = {
             let data = self.data.lock().await;
@@ -634,18 +672,32 @@ impl Service {
         if tun && cfg!(windows) && !win::is_elevated() {
             bail!("TUN_NEEDS_ADMIN");
         }
+        tray::notify_connecting(&self.handle, &profile.display_name());
+        let profile = self.pin_certificate(profile, &settings).await;
         let plan = config::plan(&profile, &settings, &self.config_env());
         {
             let mut conn = self.conn.lock().await;
-            stop_active(&mut conn, &settings).await;
-            let ready = if tun { None } else { Some(settings.proxy.socks_port) };
-            if let Err(e) = conn.core.start(&plan, ready).await {
+            // Switching servers: the running cores are replaced by `start`, which waits for
+            // their ports and TUN adapter to be released before launching the new ones.
+            let previous = conn.active.take();
+            if let Some(previous) = &previous {
+                previous.traffic_cancel.cancel();
+            }
+            let system_proxy = !tun && settings.proxy.system_proxy;
+            let previous_proxy = previous.as_ref().is_some_and(|p| p.system_proxy);
+            if previous_proxy && !system_proxy {
+                let _ = win::sysproxy::set(false, settings.proxy.http_port, "");
+            }
+            if let Err(e) = conn.core.start(&plan, &StartOptions::for_plan(&plan, &settings)).await {
+                conn.core.stop().await;
+                if previous_proxy {
+                    let _ = win::sysproxy::set(false, settings.proxy.http_port, "");
+                }
                 drop(conn);
                 self.log(LogLevel::Error, format!("connect «{}»: {e:#}", profile.display_name()));
                 self.notify_connection().await;
                 return Err(e);
             }
-            let system_proxy = !tun && settings.proxy.system_proxy;
             if system_proxy {
                 if let Err(e) = win::sysproxy::set(true, settings.proxy.http_port, &settings.proxy.bypass) {
                     self.log(LogLevel::Warning, format!("system proxy: {e:#}"));
@@ -677,9 +729,10 @@ impl Service {
                 since: Utc::now(),
                 system_proxy,
                 socks_port,
-                core: match (plan.xray.is_some(), plan.singbox.is_some()) {
-                    (true, true) => "xray+sing-box",
-                    (true, false) => "xray",
+                core: match (plan.xray.is_some(), plan.singbox.is_some(), tun) {
+                    (true, true, _) => "xray+sing-box",
+                    (true, false, true) => "xray (tun)",
+                    (true, false, false) => "xray",
                     _ => "sing-box",
                 },
                 traffic_cancel,
@@ -693,7 +746,75 @@ impl Service {
         }
         self.log(LogLevel::Info, format!("connected to «{}» ({:?} mode)", profile.display_name(), settings.proxy.mode));
         self.notify_connection().await;
-        Ok(self.connection_info().await)
+        let info = self.connection_info().await;
+        if let Some(since) = info.since {
+            let handle = self.handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(service) = handle.try_state::<Arc<Service>>() {
+                    service.check_connection(since).await;
+                }
+            });
+        }
+        Ok(info)
+    }
+
+    /// Checks that traffic really goes through the server the way applications send it: through
+    /// the system proxy (what browsers use) in proxy mode, through the system route (the
+    /// tunnel) in TUN mode. The result is reported to the UI and, when hidden, as a notification.
+    async fn check_connection(&self, since: DateTime<Utc>) {
+        let settings = self.data.lock().await.settings.clone();
+        let Some((profile_id, profile_name, mode, system_proxy)) = self.active_since(since).await else {
+            return;
+        };
+        let tun = mode == ConnectionMode::Tun;
+        let through = if tun {
+            None
+        } else if system_proxy {
+            Some(format!("http://127.0.0.1:{}", settings.proxy.http_port))
+        } else {
+            Some(format!("socks5h://127.0.0.1:{}", settings.proxy.socks_port))
+        };
+        // With the "direct by default" preset the exit address is legitimately the user's own.
+        let compare = !tun && settings.routing.preset != RoutingPreset::DirectByDefault;
+        let timeout = Duration::from_secs(8);
+        let (mut exit, direct) = futures_util::future::join(exit_info(through.as_deref(), timeout), async {
+            if compare {
+                exit_info(None, Duration::from_secs(5)).await
+            } else {
+                None
+            }
+        })
+        .await;
+        if exit.is_none() {
+            // The first request through a fresh core can hit a slow handshake: try once more.
+            exit = exit_info(through.as_deref(), timeout).await;
+        }
+        let blocked_proxy = if system_proxy { win::sysproxy::check(settings.proxy.http_port) } else { None };
+        let (problem, detail) = match (&exit, &direct, blocked_proxy) {
+            (None, _, _) => (Some("no-traffic"), None),
+            (Some(exit), Some(direct), _) if exit.ip == direct.ip => (Some("direct"), Some(exit.ip.clone())),
+            (_, _, Some(why)) => (Some("system-proxy"), Some(why)),
+            _ => (None, None),
+        };
+        if self.active_since(since).await.is_none() {
+            return; // disconnected or switched to another server meanwhile
+        }
+        match (&exit, problem) {
+            (Some(exit), None) => self.log(LogLevel::Info, format!("traffic check: exit address {} {}", exit.ip, exit.country)),
+            _ => self.log(
+                LogLevel::Warning,
+                format!("traffic check «{profile_name}»: {} {}", problem.unwrap_or(""), detail.clone().unwrap_or_default()),
+            ),
+        }
+        let check = ConnectionCheck { profile_id, profile_name, mode, exit, problem, detail };
+        tray::notify_check(&self.handle, &check);
+        self.emit("connection-check", check);
+    }
+
+    async fn active_since(&self, since: DateTime<Utc>) -> Option<(Uuid, String, ConnectionMode, bool)> {
+        let conn = self.conn.lock().await;
+        let active = conn.active.as_ref().filter(|a| a.since == since)?;
+        Some((active.profile_id, active.profile_name.clone(), active.mode, active.system_proxy))
     }
 
     pub async fn disconnect(&self) -> Result<()> {
@@ -709,6 +830,19 @@ impl Service {
         }
         *self.last_traffic.lock().unwrap() = TrafficSample::default();
         self.notify_connection().await;
+        Ok(())
+    }
+
+    /// Remembers the server chosen in the list, used by the tray "Connect" and auto-connect.
+    pub async fn select_profile(&self, id: Uuid) -> Result<()> {
+        let mut data = self.data.lock().await;
+        if !data.profiles.iter().any(|p| p.id == id) {
+            bail!("profile not found");
+        }
+        if data.settings.last_profile_id != Some(id) {
+            data.settings.last_profile_id = Some(id);
+            self.storage.save_settings(&data.settings)?;
+        }
         Ok(())
     }
 

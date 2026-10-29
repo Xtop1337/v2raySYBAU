@@ -166,6 +166,14 @@
       </div>
     {/if}
     <div class="field">
+      <span>{t('settings.tunEngine')}</span>
+      <select class="select" bind:value={s.tun.engine} onchange={now}>
+        <option value="singbox">{t('settings.engine.singbox')}</option>
+        <option value="xray">{t('settings.engine.xray')}</option>
+      </select>
+    </div>
+    <p class="faint hint">{t('servers.engineHint')}</p>
+    <div class="field">
       <span>{t('settings.tunStack')}</span>
       <select class="select" bind:value={s.tun.stack} onchange={now}>
         <option value="mixed">mixed</option>

@@ -82,11 +82,55 @@ pub struct CoreManager {
     sink: EventSink,
     xray: Option<CoreProcess>,
     singbox: Option<CoreProcess>,
+    tun_active: bool,
+}
+
+/// How to start a connection.
+#[derive(Debug, Clone, Default)]
+pub struct StartOptions {
+    /// Local port that must accept connections before the start counts as successful.
+    pub ready_port: Option<u16>,
+    /// Local ports the cores will listen on (checked to be free when switching servers).
+    pub ports: Vec<u16>,
+    /// The plan creates a TUN adapter.
+    pub tun: bool,
+}
+
+impl StartOptions {
+    pub fn for_plan(plan: &LaunchPlan, settings: &crate::settings::Settings) -> Self {
+        let tun = settings.proxy.mode == crate::settings::ConnectionMode::Tun;
+        // Xray always exposes SOCKS (sing-box TUN forwards to it); sing-box does only in proxy mode.
+        let has_socks = plan.xray.is_some() || !tun;
+        let mut ports = Vec::new();
+        if has_socks {
+            ports.extend([settings.proxy.socks_port, settings.proxy.http_port]);
+        }
+        if plan.xray.is_some() {
+            ports.push(settings.advanced.api_port);
+        }
+        if settings.dns.local_dns {
+            ports.push(settings.dns.local_port);
+        }
+        StartOptions { ready_port: has_socks.then_some(settings.proxy.socks_port), ports, tun }
+    }
+}
+
+/// Waits until every port can be bound on 127.0.0.1; returns the first one still busy.
+pub async fn wait_ports_free(ports: &[u16], timeout: Duration) -> Option<u16> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let busy = ports.iter().copied().find(|port| std::net::TcpListener::bind(("127.0.0.1", *port)).is_err());
+        match busy {
+            None => return None,
+            Some(port) if tokio::time::Instant::now() >= deadline => return Some(port),
+            Some(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+        }
+    }
 }
 
 impl CoreManager {
     pub fn new(paths: CorePaths, sink: EventSink) -> Self {
-        CoreManager { paths, sink, xray: None, singbox: None }
+        CoreManager { paths, sink, xray: None, singbox: None, tun_active: false }
     }
 
     pub fn paths(&self) -> &CorePaths {
@@ -97,21 +141,32 @@ impl CoreManager {
         self.xray.as_ref().is_some_and(CoreProcess::is_alive) || self.singbox.as_ref().is_some_and(CoreProcess::is_alive)
     }
 
-    /// Starts the cores of `plan` and waits until `ready_port` accepts connections.
-    pub async fn start(&mut self, plan: &LaunchPlan, ready_port: Option<u16>) -> Result<()> {
+    /// Starts the cores of `plan` and waits until `options.ready_port` accepts connections.
+    /// Cores that are already running (e.g. the previous server) are stopped first, and the
+    /// local ports / TUN adapter they held are given time to be released.
+    pub async fn start(&mut self, plan: &LaunchPlan, options: &StartOptions) -> Result<()> {
+        let had_tun = self.tun_active;
+        let was_running = self.xray.is_some() || self.singbox.is_some();
         self.stop().await;
+        if was_running {
+            if let Some(port) = wait_ports_free(&options.ports, Duration::from_secs(3)).await {
+                bail!("local port {port} is still in use by another program; change it in the settings");
+            }
+            if had_tun || options.tun {
+                // Windows removes the Wintun adapter of the previous core asynchronously.
+                tokio::time::sleep(Duration::from_millis(1200)).await;
+            }
+        }
+        self.tun_active = options.tun;
+        let ready_port = options.ready_port;
         if let Some(config) = &plan.xray {
             let process = self.spawn(CoreKind::Xray, config).await?;
             self.xray = Some(process);
-            if let Some(port) = ready_port.filter(|_| plan.singbox.is_none()) {
+            if let Some(port) = ready_port {
                 self.wait_ready(CoreKind::Xray, port).await?;
             }
         }
         if let Some(config) = &plan.singbox {
-            if plan.xray.is_some() {
-                // sing-box forwards to the Xray SOCKS inbound: give Xray a moment to listen.
-                tokio::time::sleep(Duration::from_millis(300)).await;
-            }
             let process = self.spawn(CoreKind::SingBox, config).await?;
             self.singbox = Some(process);
             if let Some(port) = ready_port.filter(|_| plan.xray.is_none()) {
@@ -157,6 +212,7 @@ impl CoreManager {
     }
 
     pub async fn stop(&mut self) {
+        self.tun_active = false;
         if let Some(mut p) = self.singbox.take() {
             p.kill().await;
         }

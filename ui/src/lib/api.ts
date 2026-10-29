@@ -32,6 +32,7 @@ export const api = {
   updateSubscription: (id: string) => invoke<number>('update_subscription', { id }),
   updateAllSubscriptions: () => invoke<[number, number]>('update_all_subscriptions'),
   connect: (id: string) => invoke<ConnectionInfo>('connect', { id }),
+  selectProfile: (id: string) => invoke<void>('select_profile', { id }),
   disconnect: () => invoke<void>('disconnect'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
   startTest: (ids: string[] | null, method: TestMethod) => invoke<number>('start_test', { ids, method }),

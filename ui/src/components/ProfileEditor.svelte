@@ -172,9 +172,16 @@
           <label class="wide"><span>{t('editor.publicKey')}</span><input class="input mono" bind:value={p.tls.publicKey} /></label>
           <label><span>{t('editor.shortId')}</span><input class="input mono" bind:value={p.tls.shortId} /></label>
           <label><span>{t('editor.spiderX')}</span><input class="input" bind:value={p.tls.spiderX} placeholder="/" /></label>
+          <label class="full"><span>{t('editor.mldsa65Verify')}</span><input class="input mono" bind:value={p.tls.mldsa65Verify} /></label>
         {:else}
           <label><span>{t('editor.alpn')}</span><input class="input" bind:value={alpn} placeholder="h2,http/1.1" /></label>
+          <label class="full"><span>{t('editor.pinnedSha256')}</span><input class="input mono" bind:value={p.tls.pinnedSha256} /></label>
+          {#if xrayProtocol}
+            <label><span>{t('editor.verifyNames')}</span><input class="input" bind:value={p.tls.verifyNames} /></label>
+            <label><span>{t('editor.echConfig')}</span><input class="input mono" bind:value={p.tls.echConfig} /></label>
+          {/if}
           <div class="full"><Toggle bind:checked={p.tls.allowInsecure} label={t('editor.allowInsecure')} /></div>
+          {#if p.tls.allowInsecure && xrayProtocol}<p class="full hint">{t('editor.allowInsecureHint')}</p>{/if}
         {/if}
       {/if}
       {#if p.protocol === 'hysteria2'}
@@ -233,5 +240,11 @@
 
   .full {
     grid-column: 1 / -1;
+  }
+
+  .hint {
+    margin: -4px 0 0;
+    font-size: 12px;
+    color: var(--text-2);
   }
 </style>

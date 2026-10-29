@@ -43,7 +43,7 @@ fn mux_is_skipped_for_vision_and_applied_otherwise() {
 fn fragment_adds_dialer_proxy() {
     let mut settings = Settings::default();
     settings.fragment.enabled = true;
-    let config = xray::build_client(&reality(), &settings, &ConfigEnv::default(), true);
+    let config = xray::build_client(&reality(), &settings, &ConfigEnv::default(), XrayMode::Proxy);
     assert_eq!(config["outbounds"][0]["streamSettings"]["sockopt"]["dialerProxy"], "fragment");
     let fragment = find(&config["outbounds"], "tag", "fragment");
     assert_eq!(fragment["settings"]["fragment"]["packets"], "tlshello");
@@ -56,13 +56,13 @@ fn dns_options() {
     settings.dns.fake_dns = true;
     let mut profile = reality();
     profile.dns = "https://9.9.9.9/dns-query".into();
-    let config = xray::build_client(&profile, &settings, &ConfigEnv::default(), true);
+    let config = xray::build_client(&profile, &settings, &ConfigEnv::default(), XrayMode::Proxy);
     assert_eq!(config["dns"]["servers"][0], "fakedns");
     assert_eq!(config["dns"]["servers"][1], "https://9.9.9.9/dns-query");
     assert_eq!(find(&config["inbounds"], "tag", "dns-in")["port"], 10853);
     assert!(config["fakedns"].is_array());
     settings.dns.use_profile_dns = false;
-    let config = xray::build_client(&profile, &settings, &ConfigEnv::default(), true);
+    let config = xray::build_client(&profile, &settings, &ConfigEnv::default(), XrayMode::Proxy);
     assert_eq!(config["dns"]["servers"][1], "https://1.1.1.1/dns-query");
 }
 
@@ -83,7 +83,7 @@ fn routing_presets_and_custom_rules() {
         outbound: RuleOutbound::Direct,
         ..RoutingRule::default()
     });
-    let config = xray::build_client(&reality(), &settings, &ConfigEnv::default(), true);
+    let config = xray::build_client(&reality(), &settings, &ConfigEnv::default(), XrayMode::Proxy);
     let rules = config["routing"]["rules"].as_array().unwrap();
     assert!(rules.iter().any(|r| r["outboundTag"] == "block" && r["domain"][0] == "domain:example.org"));
     assert!(rules.iter().any(|r| r["ip"][0] == "geoip:ru"));
@@ -91,7 +91,7 @@ fn routing_presets_and_custom_rules() {
     assert_eq!(config["inbounds"][0]["sniffing"]["routeOnly"], true);
 
     let no_geo = ConfigEnv { geo_available: false, ..ConfigEnv::default() };
-    let config = xray::build_client(&reality(), &settings, &no_geo, true);
+    let config = xray::build_client(&reality(), &settings, &no_geo, XrayMode::Proxy);
     assert!(!config.to_string().contains("geoip:") && !config.to_string().contains("geosite:"));
 }
 
@@ -153,6 +153,84 @@ fn batch_config_maps_inbounds_to_outbounds() {
 fn override_is_merged() {
     let mut settings = Settings::default();
     settings.advanced.config_override = r#"{"log": {"loglevel": "debug"}}"#.into();
-    let config = xray::build_client(&reality(), &settings, &ConfigEnv::default(), true);
+    let config = xray::build_client(&reality(), &settings, &ConfigEnv::default(), XrayMode::Proxy);
     assert_eq!(config["log"]["loglevel"], "debug");
+}
+
+#[test]
+fn xray_engine_tun_runs_without_singbox() {
+    let mut settings = Settings::default();
+    settings.proxy.mode = crate::settings::ConnectionMode::Tun;
+    settings.tun.engine = crate::settings::TunEngine::Xray;
+    settings.tun.app_mode = TunAppMode::Include;
+    settings.tun.apps = vec!["chrome.exe".into()];
+    settings.routing.rules.push(RoutingRule {
+        kind: RuleKind::Process,
+        values: vec!["steam.exe".into()],
+        outbound: RuleOutbound::Direct,
+        ..RoutingRule::default()
+    });
+    let plan = plan(&reality(), &settings, &ConfigEnv::default());
+    assert!(plan.singbox.is_none());
+    let config = plan.xray.unwrap();
+    let tun = find(&config["inbounds"], "tag", "tun-in");
+    assert_eq!(tun["protocol"], "tun");
+    assert_eq!(tun["settings"]["autoSystemRoutingTable"][0], "0.0.0.0/0");
+    let rules = config["routing"]["rules"].as_array().unwrap();
+    assert_eq!(rules[0]["inboundTag"][0], "tun-in");
+    assert_eq!(rules[0]["outboundTag"], "dns-out");
+    assert!(rules.iter().any(|r| r["process"][0] == "steam.exe" && r["outboundTag"] == "direct"));
+    let include = rules.iter().position(|r| r["process"][0] == "chrome.exe" && r["outboundTag"] == "proxy").unwrap();
+    assert_eq!(rules[include + 1], serde_json::json!({"type": "field", "inboundTag": ["tun-in"], "outboundTag": "direct"}));
+
+    // Hysteria2 still needs sing-box even with the Xray engine.
+    let hy = parse_link("hy2://pw@hy.example.com:443/?sni=hy.example.com#HY").unwrap();
+    assert!(plan_of(&hy, &settings).singbox.is_some());
+    // Proxy mode never emits process rules.
+    settings.proxy.mode = crate::settings::ConnectionMode::Proxy;
+    assert!(!xray::build_client(&reality(), &settings, &ConfigEnv::default(), XrayMode::Proxy).to_string().contains("steam.exe"));
+}
+
+fn plan_of(profile: &Profile, settings: &Settings) -> LaunchPlan {
+    plan(profile, settings, &ConfigEnv::default())
+}
+
+#[test]
+fn old_settings_default_to_singbox_engine() {
+    let settings: Settings = serde_json::from_str(r#"{"tun": {"appMode": "include"}}"#).unwrap();
+    assert_eq!(settings.tun.engine, crate::settings::TunEngine::SingBox);
+    assert_eq!(settings.tun.app_mode, TunAppMode::Include);
+}
+
+#[test]
+fn tls_protections_reach_xray_and_allow_insecure_is_never_emitted() {
+    let mut settings = Settings::default();
+    settings.advanced.allow_insecure = true;
+    let tls = parse_link("trojan://pw@t.com:443?security=tls&sni=t.com&allowInsecure=1&pcs=AB:12,cd34&vcn=t.com&ech=AEX%2B#T").unwrap();
+    let config = xray::build_client(&tls, &settings, &ConfigEnv::default(), XrayMode::Proxy);
+    let tls_settings = &config["outbounds"][0]["streamSettings"]["tlsSettings"];
+    assert_eq!(tls_settings["pinnedPeerCertSha256"], "ab12,cd34");
+    assert_eq!(tls_settings["verifyPeerCertByName"], "t.com");
+    assert_eq!(tls_settings["echConfigList"], "AEX+");
+    // Removed in Xray 26.10: a config containing it does not start.
+    assert!(!config.to_string().contains("allowInsecure"));
+
+    let pq = parse_link("vless://id@r.com:443?security=reality&sni=a.com&pbk=KEY&sid=01&pqv=VERIFY&type=xhttp#R").unwrap();
+    let config = xray::build_client(&pq, &Settings::default(), &ConfigEnv::default(), XrayMode::Proxy);
+    assert_eq!(config["outbounds"][0]["streamSettings"]["realitySettings"]["mldsa65Verify"], "VERIFY");
+}
+
+#[test]
+fn insecure_profiles_need_a_pinned_certificate() {
+    use crate::testing::needs_pin;
+    let insecure = parse_link("trojan://pw@t.com:443?security=tls&allowInsecure=1#T").unwrap();
+    assert!(needs_pin(&insecure, false));
+    let pinned = parse_link("trojan://pw@t.com:443?security=tls&allowInsecure=1&pcs=ab#T").unwrap();
+    assert!(!needs_pin(&pinned, false));
+    let secure = parse_link("trojan://pw@t.com:443?security=tls#T").unwrap();
+    assert!(!needs_pin(&secure, false));
+    assert!(needs_pin(&secure, true), "the global switch counts too");
+    assert!(!needs_pin(&reality(), true), "Reality has its own authentication");
+    let hy = parse_link("hy2://pw@hy.example.com:443/?insecure=1#HY").unwrap();
+    assert!(!needs_pin(&hy, true), "sing-box protocols are not pinned this way");
 }

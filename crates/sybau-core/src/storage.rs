@@ -64,7 +64,18 @@ impl Storage {
     }
 
     pub fn load_settings(&self) -> Result<Settings> {
-        self.load("settings.json")
+        let mut settings: Settings = self.load("settings.json")?;
+        // Up to 1.0.2 the default bypass list had "172.2*", which also matched public
+        // addresses such as 172.217.* (Google): those sites skipped the proxy.
+        let bypass = &mut settings.proxy.bypass;
+        if bypass.split(';').any(|e| e.trim() == "172.2*") {
+            *bypass = bypass
+                .split(';')
+                .flat_map(|e| if e.trim() == "172.2*" { (20..30).map(|n| format!("172.{n}.*")).collect() } else { vec![e.to_string()] })
+                .collect::<Vec<_>>()
+                .join(";");
+        }
+        Ok(settings)
     }
 
     pub fn save_settings(&self, settings: &Settings) -> Result<()> {
@@ -122,6 +133,17 @@ pub fn export_backup(profiles: &[Profile], subscriptions: &[Subscription], setti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_bypass_list_no_longer_skips_public_addresses() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).unwrap();
+        std::fs::write(dir.path().join("settings.json"), r#"{"proxy": {"bypass": "localhost;172.19.*;172.2*;172.30.*;<local>"}}"#).unwrap();
+        let bypass = storage.load_settings().unwrap().proxy.bypass;
+        assert!(!bypass.contains("172.2*"));
+        assert!(bypass.starts_with("localhost;172.19.*;172.20.*;172.21.*"));
+        assert!(bypass.ends_with("172.29.*;172.30.*;<local>"));
+    }
 
     #[test]
     fn saves_and_loads() {

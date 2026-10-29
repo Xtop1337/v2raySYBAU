@@ -7,7 +7,7 @@ use std::process::Command;
 use serde_json::Value;
 use sybau_core::config::{self, singbox, xray, ConfigEnv};
 use sybau_core::model::{RoutingRule, RuleKind, RuleOutbound};
-use sybau_core::settings::{ConnectionMode, RoutingPreset, Settings, TunAppMode};
+use sybau_core::settings::{ConnectionMode, RoutingPreset, Settings, TunAppMode, TunEngine};
 use sybau_core::share::parse_link;
 
 const LINKS: &[&str] = &[
@@ -15,8 +15,10 @@ const LINKS: &[&str] = &[
     "vless://3f1c7a52-9d0e-4b8a-8c1f-2a7d6e5b4c3a@1.2.3.4:443?type=ws&security=tls&path=%2Fws&host=cdn.example.com&sni=cdn.example.com#ws",
     "vless://3f1c7a52-9d0e-4b8a-8c1f-2a7d6e5b4c3a@a.com:443?type=grpc&serviceName=svc&mode=multi&security=tls#grpc",
     "vless://3f1c7a52-9d0e-4b8a-8c1f-2a7d6e5b4c3a@a.com:443?type=xhttp&path=%2Fx&mode=packet-up&security=reality&pbk=Z84J2IelR9ch3k8VtlVhhs5ycBUlXA7wHBWcBrjqnAw&sni=a.com&sid=ab#xhttp",
-    "vless://3f1c7a52-9d0e-4b8a-8c1f-2a7d6e5b4c3a@a.com:80?type=httpupgrade&path=%2Fu#hu",
-    "vless://3f1c7a52-9d0e-4b8a-8c1f-2a7d6e5b4c3a@a.com:80?type=tcp&headerType=http&host=a.com&path=%2F#tcp-http",
+    "vless://3f1c7a52-9d0e-4b8a-8c1f-2a7d6e5b4c3a@a.com:443?type=httpupgrade&path=%2Fu&security=tls&sni=a.com#hu",
+    "vless://3f1c7a52-9d0e-4b8a-8c1f-2a7d6e5b4c3a@a.com:443?type=tcp&headerType=http&host=a.com&path=%2F&security=tls&sni=a.com#tcp-http",
+    // Xray 26.10+ only accepts VLESS without TLS towards private addresses.
+    "vless://3f1c7a52-9d0e-4b8a-8c1f-2a7d6e5b4c3a@10.0.0.5:8080?type=ws&path=%2Fws#plain-private",
     "vmess://eyJ2IjoiMiIsInBzIjoidm0iLCJhZGQiOiJ2bS5leGFtcGxlLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6ImI4MzEzODFkLTYzMjQtNGQ1My1hZDRmLThjZGE0OGIzMDgxMSIsImFpZCI6IjAiLCJzY3kiOiJhdXRvIiwibmV0Ijoid3MiLCJ0eXBlIjoibm9uZSIsImhvc3QiOiJ2bS5leGFtcGxlLmNvbSIsInBhdGgiOiIvdm0iLCJ0bHMiOiJ0bHMiLCJzbmkiOiJ2bS5leGFtcGxlLmNvbSJ9",
     "trojan://password@t.example.com:443?sni=t.example.com#trojan",
     "ss://YWVzLTI1Ni1nY206cGFzcw@ss.example.com:8388#ss",
@@ -85,7 +87,14 @@ fn variants() -> Vec<(String, Settings)> {
     list.push(("tun-include".into(), tun.clone()));
     tun.tun.app_mode = TunAppMode::Exclude;
     tun.routing.preset = RoutingPreset::Global;
-    list.push(("tun-exclude".into(), tun));
+    list.push(("tun-exclude".into(), tun.clone()));
+    let mut xray_tun = tun.clone();
+    xray_tun.tun.engine = TunEngine::Xray;
+    list.push(("tun-xray-exclude".into(), xray_tun.clone()));
+    xray_tun.tun.app_mode = TunAppMode::Include;
+    xray_tun.tun.strict_route = false;
+    xray_tun.routing.preset = RoutingPreset::BypassLanRu;
+    list.push(("tun-xray-include".into(), xray_tun));
     list
 }
 
@@ -99,7 +108,7 @@ fn xray_accepts_generated_configs() {
     for (variant, settings) in variants() {
         for link in LINKS {
             let profile = parse_link(link).unwrap();
-            let config = xray::build_client(&profile, &settings, &env, settings.proxy.mode == ConnectionMode::Proxy);
+            let Some(config) = config::plan(&profile, &settings, &env).xray else { continue };
             check(&xray_bin, &["run", "-test", "-c"], &config, &format!("{variant}/{}", profile.name));
         }
         let profiles: Vec<_> = LINKS.iter().map(|l| parse_link(l).unwrap()).collect();

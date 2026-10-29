@@ -1,10 +1,20 @@
 name: Release
 
-# Push a tag like v1.0.1 to publish a GitHub release with the NSIS installer and the
-# latest.json manifest read by the built-in updater.
+# Push a tag like v1.0.1 (or run this workflow from the Actions tab with a version) to publish
+# a GitHub release with the NSIS installer and the latest.json manifest read by the updater.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 1.0.0 (the tag v<version> is created)'
+        required: true
+        default: '1.0.0'
+      replace:
+        description: 'Delete an existing release and tag with this version first (rebuild it)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -13,6 +23,7 @@ jobs:
   release:
     runs-on: windows-latest
     env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
@@ -29,7 +40,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Version from tag
         shell: pwsh
-        run: ./scripts/set-version.ps1 '${{ github.ref_name }}'
+        run: ./scripts/set-version.ps1 $env:TAG
       - name: Fetch latest cores
         shell: pwsh
         env:
@@ -45,17 +56,27 @@ jobs:
             Write-Warning 'TAURI_SIGNING_PRIVATE_KEY secret is not set: the release is built without updater signatures.'
             "args=--bundles nsis --config src-tauri/tauri.no-updater.conf.json" >> $env:GITHUB_OUTPUT
           }
+      - name: Delete the existing release
+        if: github.event_name == 'workflow_dispatch' && inputs.replace
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete $env:TAG --repo ${{ github.repository }} --cleanup-tag --yes
+          if ($LASTEXITCODE -ne 0) { Write-Warning "no release $env:TAG to delete" }
+          $global:LASTEXITCODE = 0
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: V2Ray Sybau ${{ github.ref_name }}
+          tagName: ${{ env.TAG }}
+          releaseName: V2Ray Sybau ${{ env.TAG }}
+          releaseCommitish: ${{ github.sha }}
           releaseBody: |
             Установщик для Windows 10/11 (x64): скачайте `*-setup.exe` и запустите.
             В комплекте последние Xray-core, sing-box и geoip/geosite.
             Уже установленное приложение обновится само (О программе → Проверить обновления).
           releaseDraft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(env.TAG, '-') }}
           includeUpdaterJson: true
           args: ${{ steps.signing.outputs.args }}
