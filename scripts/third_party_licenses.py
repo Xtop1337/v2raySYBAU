@@ -37,6 +37,7 @@ def rust_crates() -> list[dict]:
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",  # Windows would decode with the ANSI code page
         ).stdout
     )
     packages = {p["id"]: p for p in metadata["packages"]}
