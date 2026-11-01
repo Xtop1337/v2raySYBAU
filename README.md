@@ -93,4 +93,10 @@ git push origin v1.0.1
 
 ## Лицензии
 
-Код приложения распространяется по лицензии MIT. Xray-core (MPL-2.0) и sing-box (GPL-3.0) — отдельные программы. Они поставляются без изменений и запускаются как самостоятельные процессы.
+Код приложения распространяется по лицензии [MIT](LICENSE). Xray-core (MPL-2.0) и sing-box (GPL-3.0) — отдельные программы. Они поставляются без изменений и запускаются как самостоятельные процессы.
+
+Установщик также содержит Wintun (`wintun.dll`, Wintun Prebuilt Binaries License), файлы маршрутизации geoip/geosite от [Loyalsoldier/v2ray-rules-dat](https://github.com/Loyalsoldier/v2ray-rules-dat) (GPL-3.0; GeoIP — данные GeoLite2 от MaxMind, CC BY-SA 4.0) и шрифт флагов Twemoji Country Flags (MIT, графика Twemoji — CC BY 4.0).
+
+- Полный список компонентов и их лицензий: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+- Тексты лицензий устанавливаются вместе с приложением: «О программе» → «Лицензии» → «Тексты лицензий». Там же лежат точные версии компонентов (`SOURCES.txt`) и лицензии всех встроенных библиотек (`THIRD-PARTY-DEPENDENCIES.txt`).
+- Исходный код поставляемых версий sing-box и geo-данных (GPL-3.0) приложен к каждому [релизу](https://github.com/Xtop1337/v2raySYBAU/releases).

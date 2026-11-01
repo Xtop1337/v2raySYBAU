@@ -74,6 +74,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/fetch-cores.ps1
+      - name: Licenses of the bundled libraries
+        run: |
+          cargo fetch --target x86_64-pc-windows-msvc
+          python scripts/third_party_licenses.py
       - run: cargo test -p sybau-core --lib
       - name: Build NSIS installer
         run: pnpm tauri build --bundles nsis --config src-tauri/tauri.no-updater.conf.json

@@ -100,6 +100,7 @@ pub fn run() {
             commands::update_core,
             commands::set_ui_language,
             commands::open_data_dir,
+            commands::open_licenses_dir,
             commands::quit_app,
         ])
         .build(tauri::generate_context!())

@@ -8,7 +8,7 @@ use sybau_core::model::{LogEntry, Profile, Subscription, TestMethod};
 use sybau_core::runtime::{CoreKind, TrafficSample};
 use sybau_core::settings::Settings;
 use sybau_core::testing::NodeStats;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 
 use crate::service::{ConnectionInfo, CoreVersions, ImportSummary, Service, Snapshot};
@@ -201,6 +201,13 @@ pub fn set_ui_language(app: AppHandle, language: String, state: State<'_, TrayLa
 #[tauri::command]
 pub fn open_data_dir(service: Svc<'_>) -> CmdResult<()> {
     tauri_plugin_opener::open_path(service.data_dir(), None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Folder with the license texts installed with the app (see THIRD-PARTY-NOTICES.md).
+#[tauri::command]
+pub fn open_licenses_dir(app: AppHandle) -> CmdResult<()> {
+    let dir = app.path().resource_dir().map_err(|e| e.to_string())?.join("resources").join("licenses");
+    tauri_plugin_opener::open_path(dir, None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

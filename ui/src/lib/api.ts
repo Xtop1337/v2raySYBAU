@@ -47,5 +47,6 @@ export const api = {
   updateCore: (kind: 'xray' | 'singbox' | 'geo') => invoke<string>('update_core', { kind }),
   setUiLanguage: (language: string) => invoke<void>('set_ui_language', { language }),
   openDataDir: () => invoke<void>('open_data_dir'),
+  openLicensesDir: () => invoke<void>('open_licenses_dir'),
   quit: () => invoke<void>('quit_app'),
 };
