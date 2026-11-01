@@ -74,7 +74,6 @@ pub fn run() {
             commands::delete_profiles,
             commands::remove_duplicates,
             commands::remove_unreachable,
-            commands::sort_by_delay,
             commands::reorder_profiles,
             commands::share_links,
             commands::export_profiles,
@@ -101,6 +100,7 @@ pub fn run() {
             commands::update_core,
             commands::set_ui_language,
             commands::open_data_dir,
+            commands::open_licenses_dir,
             commands::quit_app,
         ])
         .build(tauri::generate_context!())

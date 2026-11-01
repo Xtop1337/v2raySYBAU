@@ -21,7 +21,6 @@ export const api = {
   deleteProfiles: (ids: string[]) => invoke<number>('delete_profiles', { ids }),
   removeDuplicates: () => invoke<number>('remove_duplicates'),
   removeUnreachable: (group: string | null) => invoke<number>('remove_unreachable', { group }),
-  sortByDelay: () => invoke<void>('sort_by_delay'),
   reorder: (ids: string[]) => invoke<void>('reorder_profiles', { ids }),
   shareLinks: (ids: string[]) => invoke<string>('share_links', { ids }),
   exportProfiles: (ids: string[], path: string) => invoke<void>('export_profiles', { ids, path }),
@@ -48,5 +47,6 @@ export const api = {
   updateCore: (kind: 'xray' | 'singbox' | 'geo') => invoke<string>('update_core', { kind }),
   setUiLanguage: (language: string) => invoke<void>('set_ui_language', { language }),
   openDataDir: () => invoke<void>('open_data_dir'),
+  openLicensesDir: () => invoke<void>('open_licenses_dir'),
   quit: () => invoke<void>('quit_app'),
 };

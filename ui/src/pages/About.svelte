@@ -9,6 +9,14 @@
   import { checkForUpdates, installUpdate, updates } from '../lib/updates.svelte';
 
   const REPO = 'https://github.com/Xtop1337/v2raySYBAU';
+  // Shipped unmodified next to the app; full texts in the installed licenses folder.
+  const components = [
+    { name: 'Xray-core', license: 'MPL-2.0', url: 'https://github.com/XTLS/Xray-core' },
+    { name: 'sing-box', license: 'GPL-3.0', url: 'https://github.com/SagerNet/sing-box' },
+    { name: 'Wintun', license: 'Wintun Prebuilt Binaries License', url: 'https://www.wintun.net' },
+    { name: 'geoip / geosite', license: 'GPL-3.0 · CC BY-SA 4.0 (GeoLite2, MaxMind)', url: 'https://github.com/Loyalsoldier/v2ray-rules-dat' },
+    { name: 'Twemoji Country Flags', license: 'MIT · CC BY 4.0 (Twemoji)', url: 'https://github.com/talkjs/country-flag-emoji-polyfill' },
+  ];
   let cores = $state<CoreVersions | null>(null);
   let busy = $state<string | null>(null);
 
@@ -96,6 +104,31 @@
     <div class="faint mono dir">{cores?.dir}</div>
   </div>
 
+  <div class="card block" data-testid="licenses">
+    <h2>{t('about.licenses')}</h2>
+    <p class="muted note">{t('about.licensesNote')}</p>
+    <div class="cores">
+      <div class="core">
+        <span class="core-name">V2Ray Sybau</span>
+        <span>MIT</span>
+        <button class="btn small" onclick={() => openUrl(`${REPO}/blob/main/LICENSE`)}><Icon name="link" size={14} />{t('about.license')}</button>
+      </div>
+      {#each components as c}
+        <div class="core">
+          <span class="core-name">{c.name}</span>
+          <span>{c.license}</span>
+          <button class="btn small" onclick={() => openUrl(c.url)}><Icon name="globe" size={14} />{t('about.source')}</button>
+        </div>
+      {/each}
+    </div>
+    <div class="row">
+      <button class="btn small" onclick={() => api.openLicensesDir().catch((e) => toast(errorText(e), 'error'))}>
+        <Icon name="folder" size={14} />{t('about.openLicenses')}
+      </button>
+      <button class="btn small" onclick={() => openUrl(`${REPO}/blob/main/THIRD-PARTY-NOTICES.md`)}><Icon name="file" size={14} />THIRD-PARTY-NOTICES</button>
+    </div>
+  </div>
+
   <div class="card block">
     <h2>{t('about.dataDir')}</h2>
     <div class="row">
@@ -115,6 +148,11 @@
 
   .desc {
     max-width: 560px;
+  }
+
+  .note {
+    margin: 0;
+    font-size: 12.5px;
   }
 
   .block {

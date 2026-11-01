@@ -14,7 +14,7 @@ use sybau_core::import::{dedupe, import_text, ImportResult};
 use sybau_core::logs::Journal;
 use sybau_core::model::{DelayInfo, LogEntry, LogLevel, Profile, Subscription, TestMethod};
 use sybau_core::runtime::{core_version, CoreEvent, CoreKind, CoreManager, CorePaths, StartOptions, TrafficMonitor, TrafficSample};
-use sybau_core::settings::{ConnectionMode, MonitorScope, RoutingPreset, Settings};
+use sybau_core::settings::{ConnectionMode, MonitorScope, RoutingPreset, Settings, TunAppMode};
 use sybau_core::storage::Storage;
 use sybau_core::subscription;
 use sybau_core::testing::{
@@ -71,8 +71,11 @@ pub struct ConnectionCheck {
     pub mode: ConnectionMode,
     /// Address and country the internet sees through the connection.
     pub exit: Option<ExitInfo>,
-    /// `None` when traffic goes through the server; otherwise `no-traffic`, `direct`
-    /// (the exit address is the user's own) or `system-proxy` (Windows ignores our proxy).
+    /// `None` when traffic goes through the server. Connection refused (not connected):
+    /// `unreachable` (the server does not answer), `tun-no-route` (Windows did not route
+    /// traffic into the TUN), `tun-leak` (traffic through the TUN still leaves from the user's own
+    /// address), `error` (see `detail`). Connected with a warning: `direct` (a routing rule
+    /// sends traffic past the server) or `system-proxy` (Windows ignores our proxy).
     pub problem: Option<&'static str>,
     pub detail: Option<String>,
 }
@@ -131,6 +134,9 @@ pub struct Service {
     log_queue: Arc<std::sync::Mutex<Vec<LogEntry>>>,
     last_traffic: std::sync::Mutex<TrafficSample>,
     clash_api_port: u16,
+    /// The user's own public address (measured while disconnected): a "connected" TUN whose
+    /// traffic still leaves from it is not working.
+    direct_ip: std::sync::Mutex<Option<String>>,
 }
 
 impl Service {
@@ -185,6 +191,7 @@ impl Service {
             log_queue,
             last_traffic: std::sync::Mutex::new(TrafficSample::default()),
             clash_api_port: 10814,
+            direct_ip: std::sync::Mutex::new(None),
         });
         service
             .log(LogLevel::Info, format!("V2Ray Sybau {} started, data in {}", sybau_core::APP_VERSION, service.storage.root().display()));
@@ -207,11 +214,18 @@ impl Service {
         self.clone().spawn_monitor();
         self.clone().spawn_subscription_updater();
 
+        // Cores still running from an earlier instance (closed by the installer, crashed) hold the
+        // local ports with an old server: stop them before anything connects.
+        let leftovers = sybau_core::runtime::stop_leftover_cores(&self.paths).await;
+        if leftovers > 0 {
+            self.log(LogLevel::Warning, format!("stopped {leftovers} core process(es) left over from an earlier run"));
+        }
         let settings = self.data.lock().await.settings.clone();
         if win::sysproxy::is_ours(settings.proxy.http_port) {
             // Left over from a crash: the proxy points at a port nothing listens on yet.
             let _ = win::sysproxy::set(false, settings.proxy.http_port, "");
         }
+        self.refresh_direct_ip().await;
         if settings.general.update_subscriptions_on_start {
             self.update_all_subscriptions(false).await;
         }
@@ -485,18 +499,6 @@ impl Service {
     }
 
     /// Reorders profiles: tested by delay first, then untested, then timeouts.
-    pub async fn sort_by_delay(&self) {
-        let mut data = self.data.lock().await;
-        data.profiles.sort_by_key(|p| match p.delay.ms {
-            Some(ms) if ms >= 0 => (0, ms),
-            None => (1, 0),
-            Some(_) => (2, 0),
-        });
-        self.persist_profiles(&data).await;
-        drop(data);
-        self.emit_profiles().await;
-    }
-
     pub async fn reorder(&self, ids: Vec<Uuid>) {
         let mut data = self.data.lock().await;
         let position: HashMap<Uuid, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
@@ -668,14 +670,44 @@ impl Service {
             let profile = data.profiles.iter().find(|p| p.id == id).cloned().ok_or_else(|| anyhow!("profile not found"))?;
             (profile, data.settings.clone())
         };
-        let tun = settings.proxy.mode == ConnectionMode::Tun;
-        if tun && cfg!(windows) && !win::is_elevated() {
+        if settings.proxy.mode == ConnectionMode::Tun && cfg!(windows) && !win::is_elevated() {
             bail!("TUN_NEEDS_ADMIN");
         }
+        let result = self.connect_profile(profile.clone(), &settings).await;
+        if let Err(e) = &result {
+            let text = format!("{e:#}");
+            let problem = match text.as_str() {
+                "SERVER_UNREACHABLE" => "unreachable",
+                "TUN_NO_ROUTE" => "tun-no-route",
+                "TUN_LEAK" => "tun-leak",
+                _ => "error",
+            };
+            self.log(LogLevel::Error, format!("connect «{}»: {text}", profile.display_name()));
+            let check = ConnectionCheck {
+                profile_id: profile.id,
+                profile_name: profile.display_name(),
+                mode: settings.proxy.mode,
+                exit: None,
+                problem: Some(problem),
+                detail: (problem == "error").then_some(text),
+            };
+            tray::notify_check(&self.handle, &check);
+            self.emit("connection-check", check);
+        }
+        result
+    }
+
+    async fn connect_profile(&self, profile: Profile, settings: &Settings) -> Result<ConnectionInfo> {
+        let tun = settings.proxy.mode == ConnectionMode::Tun;
+        self.emit("connecting", profile.display_name());
         tray::notify_connecting(&self.handle, &profile.display_name());
-        let profile = self.pin_certificate(profile, &settings).await;
-        let plan = config::plan(&profile, &settings, &self.config_env());
-        {
+        if self.direct_ip.lock().unwrap().is_none() && self.conn.lock().await.active.is_none() {
+            self.refresh_direct_ip().await;
+        }
+        let profile = self.pin_certificate(profile, settings).await;
+        let plan = config::plan(&profile, settings, &self.config_env());
+        let system_proxy = !tun && settings.proxy.system_proxy;
+        let exit = {
             let mut conn = self.conn.lock().await;
             // Switching servers: the running cores are replaced by `start`, which waits for
             // their ports and TUN adapter to be released before launching the new ones.
@@ -683,21 +715,28 @@ impl Service {
             if let Some(previous) = &previous {
                 previous.traffic_cancel.cancel();
             }
-            let system_proxy = !tun && settings.proxy.system_proxy;
             let previous_proxy = previous.as_ref().is_some_and(|p| p.system_proxy);
             if previous_proxy && !system_proxy {
                 let _ = win::sysproxy::set(false, settings.proxy.http_port, "");
             }
-            if let Err(e) = conn.core.start(&plan, &StartOptions::for_plan(&plan, &settings)).await {
-                conn.core.stop().await;
-                if previous_proxy {
-                    let _ = win::sysproxy::set(false, settings.proxy.http_port, "");
+            // Only a server that really carries traffic counts as connected: otherwise the
+            // tunnel is torn down again and the error is shown instead of "connected".
+            let started = match conn.core.start(&plan, &StartOptions::for_plan(&plan, settings)).await {
+                Ok(()) => self.verify_connection(settings, tun).await,
+                Err(e) => Err(e),
+            };
+            let exit = match started {
+                Ok(exit) => exit,
+                Err(e) => {
+                    conn.core.stop().await;
+                    if previous_proxy {
+                        let _ = win::sysproxy::set(false, settings.proxy.http_port, "");
+                    }
+                    drop(conn);
+                    self.notify_connection().await;
+                    return Err(e);
                 }
-                drop(conn);
-                self.log(LogLevel::Error, format!("connect «{}»: {e:#}", profile.display_name()));
-                self.notify_connection().await;
-                return Err(e);
-            }
+            };
             if system_proxy {
                 if let Err(e) = win::sysproxy::set(true, settings.proxy.http_port, &settings.proxy.bypass) {
                     self.log(LogLevel::Warning, format!("system proxy: {e:#}"));
@@ -720,15 +759,13 @@ impl Service {
                     let _ = handle.emit("traffic", sample);
                 }),
             );
-            // In native TUN mode there is no local SOCKS inbound to measure through.
-            let socks_port = (!(tun && plan.xray.is_none())).then_some(settings.proxy.socks_port);
             conn.active = Some(Active {
                 profile_id: profile.id,
                 profile_name: profile.display_name(),
                 mode: settings.proxy.mode,
                 since: Utc::now(),
                 system_proxy,
-                socks_port,
+                socks_port: Some(settings.proxy.socks_port),
                 core: match (plan.xray.is_some(), plan.singbox.is_some(), tun) {
                     (true, true, _) => "xray+sing-box",
                     (true, false, true) => "xray (tun)",
@@ -738,7 +775,8 @@ impl Service {
                 traffic_cancel,
             });
             conn.restarts = 0;
-        }
+            exit
+        };
         {
             let mut data = self.data.lock().await;
             data.settings.last_profile_id = Some(profile.id);
@@ -746,75 +784,106 @@ impl Service {
         }
         self.log(LogLevel::Info, format!("connected to «{}» ({:?} mode)", profile.display_name(), settings.proxy.mode));
         self.notify_connection().await;
-        let info = self.connection_info().await;
-        if let Some(since) = info.since {
-            let handle = self.handle.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Some(service) = handle.try_state::<Arc<Service>>() {
-                    service.check_connection(since).await;
-                }
-            });
-        }
-        Ok(info)
-    }
 
-    /// Checks that traffic really goes through the server the way applications send it: through
-    /// the system proxy (what browsers use) in proxy mode, through the system route (the
-    /// tunnel) in TUN mode. The result is reported to the UI and, when hidden, as a notification.
-    async fn check_connection(&self, since: DateTime<Utc>) {
-        let settings = self.data.lock().await.settings.clone();
-        let Some((profile_id, profile_name, mode, system_proxy)) = self.active_since(since).await else {
-            return;
-        };
-        let tun = mode == ConnectionMode::Tun;
-        let through = if tun {
-            None
-        } else if system_proxy {
-            Some(format!("http://127.0.0.1:{}", settings.proxy.http_port))
-        } else {
-            Some(format!("socks5h://127.0.0.1:{}", settings.proxy.socks_port))
-        };
-        // With the "direct by default" preset the exit address is legitimately the user's own.
-        let compare = !tun && settings.routing.preset != RoutingPreset::DirectByDefault;
-        let timeout = Duration::from_secs(8);
-        let (mut exit, direct) = futures_util::future::join(exit_info(through.as_deref(), timeout), async {
-            if compare {
-                exit_info(None, Duration::from_secs(5)).await
-            } else {
-                None
-            }
-        })
-        .await;
-        if exit.is_none() {
-            // The first request through a fresh core can hit a slow handshake: try once more.
-            exit = exit_info(through.as_deref(), timeout).await;
-        }
-        let blocked_proxy = if system_proxy { win::sysproxy::check(settings.proxy.http_port) } else { None };
-        let (problem, detail) = match (&exit, &direct, blocked_proxy) {
-            (None, _, _) => (Some("no-traffic"), None),
-            (Some(exit), Some(direct), _) if exit.ip == direct.ip => (Some("direct"), Some(exit.ip.clone())),
-            (_, _, Some(why)) => (Some("system-proxy"), Some(why)),
-            _ => (None, None),
-        };
-        if self.active_since(since).await.is_none() {
-            return; // disconnected or switched to another server meanwhile
-        }
+        // Proxy mode: the connection works; warn when applications would still go direct.
+        let (problem, detail) = if tun { (None, None) } else { self.proxy_warnings(settings, system_proxy, exit.as_ref()).await };
         match (&exit, problem) {
             (Some(exit), None) => self.log(LogLevel::Info, format!("traffic check: exit address {} {}", exit.ip, exit.country)),
-            _ => self.log(
-                LogLevel::Warning,
-                format!("traffic check «{profile_name}»: {} {}", problem.unwrap_or(""), detail.clone().unwrap_or_default()),
-            ),
+            (_, Some(problem)) => self.log(LogLevel::Warning, format!("traffic check: {problem} {}", detail.clone().unwrap_or_default())),
+            _ => {}
         }
-        let check = ConnectionCheck { profile_id, profile_name, mode, exit, problem, detail };
+        let check = ConnectionCheck {
+            profile_id: profile.id,
+            profile_name: profile.display_name(),
+            mode: settings.proxy.mode,
+            exit,
+            problem,
+            detail,
+        };
         tray::notify_check(&self.handle, &check);
         self.emit("connection-check", check);
+        Ok(self.connection_info().await)
     }
 
-    async fn active_since(&self, since: DateTime<Utc>) -> Option<(Uuid, String, ConnectionMode, bool)> {
-        let conn = self.conn.lock().await;
-        let active = conn.active.as_ref().filter(|a| a.since == since)?;
-        Some((active.profile_id, active.profile_name.clone(), active.mode, active.system_proxy))
+    /// Checks a freshly started connection: the server must answer through the local SOCKS port,
+    /// and in TUN mode applications' traffic (the system route) must leave from another address
+    /// than the user's own. Returns the exit address applications get.
+    async fn verify_connection(&self, settings: &Settings, tun: bool) -> Result<Option<ExitInfo>> {
+        let socks = format!("socks5h://127.0.0.1:{}", settings.proxy.socks_port);
+        let mut exit = exit_info(Some(&socks), Duration::from_secs(7)).await;
+        if exit.is_none() {
+            // The IP service may be unreachable from the server while the server itself works.
+            let delay = testing::http_delay(settings.proxy.socks_port, &settings.test.url, Duration::from_secs(6)).await;
+            if delay.is_none() && exit_info(Some(&socks), Duration::from_secs(5)).await.is_none() {
+                bail!("SERVER_UNREACHABLE");
+            }
+        }
+        // Only when every application is meant to go through the server.
+        let all_apps = settings.tun.app_mode == TunAppMode::All && settings.routing.preset != RoutingPreset::DirectByDefault;
+        if !tun || !all_apps {
+            return Ok(exit);
+        }
+        let direct = self.direct_ip.lock().unwrap().clone();
+        let mut seen = None;
+        for attempt in 0..4 {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            seen = exit_info(None, Duration::from_secs(5)).await;
+            if seen.as_ref().is_some_and(|s| Some(&s.ip) != direct.as_ref()) {
+                break;
+            }
+        }
+        match seen {
+            Some(seen) if Some(&seen.ip) == direct.as_ref() => bail!("TUN_LEAK"),
+            Some(seen) => exit = Some(seen),
+            // Through the server the check worked a moment ago: keep its answer.
+            None => self.log(LogLevel::Warning, "traffic check through the TUN did not answer"),
+        }
+        Ok(exit)
+    }
+
+    /// Proxy mode: a routing rule sending traffic past the server, or Windows ignoring the
+    /// system proxy (PAC script, automatic detection), leaves applications on the direct route.
+    async fn proxy_warnings(
+        &self,
+        settings: &Settings,
+        system_proxy: bool,
+        exit: Option<&ExitInfo>,
+    ) -> (Option<&'static str>, Option<String>) {
+        if system_proxy {
+            if let Some(why) = win::sysproxy::check(settings.proxy.http_port) {
+                return (Some("system-proxy"), Some(why));
+            }
+        }
+        if settings.routing.preset == RoutingPreset::DirectByDefault {
+            return (None, None);
+        }
+        let through = if system_proxy {
+            format!("http://127.0.0.1:{}", settings.proxy.http_port)
+        } else {
+            format!("socks5h://127.0.0.1:{}", settings.proxy.socks_port)
+        };
+        let seen = match exit_info(Some(&through), Duration::from_secs(6)).await {
+            Some(seen) => Some(seen),
+            None => exit.cloned(),
+        };
+        let direct = self.direct_ip.lock().unwrap().clone();
+        match (seen, direct) {
+            (Some(seen), Some(direct)) if seen.ip == direct => (Some("direct"), Some(seen.ip)),
+            _ => (None, None),
+        }
+    }
+
+    /// Remembers the user's own public address. Only meaningful while no TUN is up.
+    async fn refresh_direct_ip(&self) {
+        let tun_up = self.conn.lock().await.active.as_ref().is_some_and(|a| a.mode == ConnectionMode::Tun);
+        if tun_up {
+            return;
+        }
+        if let Some(info) = exit_info(None, Duration::from_secs(4)).await {
+            *self.direct_ip.lock().unwrap() = Some(info.ip);
+        }
     }
 
     pub async fn disconnect(&self) -> Result<()> {
@@ -827,6 +896,12 @@ impl Service {
         };
         if was_active {
             self.log(LogLevel::Info, "disconnected");
+            let handle = self.handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(service) = handle.try_state::<Arc<Service>>() {
+                    service.refresh_direct_ip().await;
+                }
+            });
         }
         *self.last_traffic.lock().unwrap() = TrafficSample::default();
         self.notify_connection().await;

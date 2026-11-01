@@ -162,15 +162,16 @@ pub fn notify_connecting(app: &AppHandle, name: &str) {
 pub fn notify_check(app: &AppHandle, check: &ConnectionCheck) {
     let exit = check.exit.as_ref().map(|e| if e.country.is_empty() { e.ip.clone() } else { format!("{} ({})", e.ip, e.country) });
     let ru = ru(app);
+    let name = &check.profile_name;
     let (title, body) = match (check.problem, ru) {
-        (None, true) => ("Туннель создан успешно".to_string(), format!("{} · IP {}", check.profile_name, exit.unwrap_or_default())),
-        (None, false) => ("Tunnel created".to_string(), format!("{} · IP {}", check.profile_name, exit.unwrap_or_default())),
-        (Some("no-traffic"), true) => {
-            ("Подключено, но трафик не проходит".to_string(), format!("Сервер «{}» не отвечает", check.profile_name))
+        (None, true) => ("Туннель создан успешно".to_string(), format!("{name} · IP {}", exit.unwrap_or_default())),
+        (None, false) => ("Tunnel created".to_string(), format!("{name} · IP {}", exit.unwrap_or_default())),
+        (Some("unreachable"), true) => ("Туннель не создан".to_string(), format!("Сервер «{name}» не отвечает")),
+        (Some("unreachable"), false) => ("Tunnel not created".to_string(), format!("Server «{name}» does not respond")),
+        (Some("tun-no-route" | "tun-leak" | "error"), true) => {
+            ("Туннель не создан".to_string(), "Откройте приложение, чтобы узнать причину".to_string())
         }
-        (Some("no-traffic"), false) => {
-            ("Connected, but no traffic".to_string(), format!("Server «{}» does not respond", check.profile_name))
-        }
+        (Some("tun-no-route" | "tun-leak" | "error"), false) => ("Tunnel not created".to_string(), "Open the app for details".to_string()),
         (Some(_), true) => ("Трафик идёт мимо туннеля".to_string(), "Откройте приложение, чтобы узнать подробности".to_string()),
         (Some(_), false) => ("Traffic bypasses the tunnel".to_string(), "Open the app for details".to_string()),
     };

@@ -116,6 +116,7 @@ export interface Settings {
     startMinimized: boolean;
     updateSubscriptionsOnStart: boolean;
     checkUpdates: boolean;
+    uiScale: number;
   };
   proxy: {
     mode: ConnectionMode;
@@ -187,7 +188,7 @@ export interface ConnectionCheck {
   profileName: string;
   mode: ConnectionMode;
   exit: ExitInfo | null;
-  problem: 'no-traffic' | 'direct' | 'system-proxy' | null;
+  problem: 'unreachable' | 'tun-no-route' | 'tun-leak' | 'error' | 'direct' | 'system-proxy' | null;
   detail: string | null;
 }
 

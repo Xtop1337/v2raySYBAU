@@ -175,10 +175,12 @@ fn xray_engine_tun_runs_without_singbox() {
     let config = plan.xray.unwrap();
     let tun = find(&config["inbounds"], "tag", "tun-in");
     assert_eq!(tun["protocol"], "tun");
-    assert_eq!(tun["settings"]["autoSystemRoutingTable"][0], "0.0.0.0/0");
+    assert_eq!(tun["settings"]["autoSystemRoutingTable"], serde_json::json!(["0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"]));
     let rules = config["routing"]["rules"].as_array().unwrap();
     assert_eq!(rules[0]["inboundTag"][0], "tun-in");
     assert_eq!(rules[0]["outboundTag"], "dns-out");
+    assert_eq!(rules[1]["outboundTag"], "block", "multicast/broadcast from the TUN is dropped");
+    assert!(rules[1]["ip"].as_array().unwrap().contains(&"224.0.0.0/4".into()));
     assert!(rules.iter().any(|r| r["process"][0] == "steam.exe" && r["outboundTag"] == "direct"));
     let include = rules.iter().position(|r| r["process"][0] == "chrome.exe" && r["outboundTag"] == "proxy").unwrap();
     assert_eq!(rules[include + 1], serde_json::json!({"type": "field", "inboundTag": ["tun-in"], "outboundTag": "direct"}));

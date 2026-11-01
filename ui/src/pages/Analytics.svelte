@@ -1,19 +1,26 @@
 <script lang="ts">
-  import Sparkline from '../components/Sparkline.svelte';
+  import LatencyChart from '../components/LatencyChart.svelte';
   import SpeedChart from '../components/SpeedChart.svelte';
   import Toggle from '../components/Toggle.svelte';
-  import { bytes, delayClass, speed } from '../lib/format';
+  import { bytes, delayClass, flag, speed } from '../lib/format';
   import { t } from '../lib/i18n.svelte';
   import { app, saveSettings } from '../lib/store.svelte';
 
+  const isActive = (id: string) => app.connection.connected && app.connection.profileId === id;
+  // The server in use comes first, then the others from the fastest.
   const nodes = $derived(
     Object.values(app.nodeStats)
       .map((stats) => ({ stats, profile: app.profiles.find((p) => p.id === stats.profileId) }))
       .filter((n) => n.profile)
-      .sort((a, b) => (a.stats.avg ?? 1e9) - (b.stats.avg ?? 1e9)),
+      .sort((a, b) => Number(isActive(b.stats.profileId)) - Number(isActive(a.stats.profileId)) || (a.stats.avg ?? 1e9) - (b.stats.avg ?? 1e9)),
   );
 
+  let picked = $state<string | null>(null);
+  // Follows the connected server until another one is picked; falls back when it disappears.
+  const current = $derived(nodes.find((n) => n.stats.profileId === picked) ?? nodes[0] ?? null);
+
   const fmt = (v: number | null) => (v == null ? '—' : `${Math.round(v)}`);
+  const nameOf = (p: { name: string; address: string } | undefined) => (p ? p.name.replace(/^\s*(?:[\u{1F1E6}-\u{1F1FF}]){2}\s*/u, '') || p.address : '');
 </script>
 
 <div class="page">
@@ -64,14 +71,42 @@
   {:else if nodes.length === 0}
     <div class="card note muted">{t('analytics.noData')}</div>
   {:else}
-    <div class="nodes">
-      {#each nodes as { stats, profile } (stats.profileId)}
-        <div class="card node" class:active={app.connection.profileId === stats.profileId && app.connection.connected}>
-          <div class="node-head">
-            <span class="node-name">{profile?.name || profile?.address}</span>
+    <div class="split">
+      <div class="card list" role="listbox" aria-label={t('analytics.servers')}>
+        {#each nodes as { stats, profile } (stats.profileId)}
+          <button
+            class="item"
+            class:selected={current?.stats.profileId === stats.profileId}
+            role="option"
+            aria-selected={current?.stats.profileId === stats.profileId}
+            data-testid="node-{stats.profileId}"
+            onclick={() => (picked = stats.profileId)}
+          >
+            <span class="avatar">{flag(profile?.name ?? '') ?? '·'}</span>
+            <span class="item-text">
+              <span class="item-name">{nameOf(profile)}</span>
+              {#if isActive(stats.profileId)}<span class="badge-now">{t('analytics.inUse')}</span>{/if}
+            </span>
+            <span class="item-delay {delayClass(stats.last ?? -1)}">{stats.last == null ? '—' : stats.last}</span>
+          </button>
+        {/each}
+        {#if nodes.length < 2 && app.settings?.analysis.scope === 'active'}
+          <p class="faint hint">{t('analytics.scopeHint')}</p>
+        {/if}
+      </div>
+
+      {#if current}
+        {@const stats = current.stats}
+        <div class="card detail" class:active={isActive(stats.profileId)} data-testid="node-detail">
+          <div class="detail-head">
+            <span class="avatar big">{flag(current.profile?.name ?? '') ?? '·'}</span>
+            <div class="detail-title">
+              <h2>{nameOf(current.profile)}</h2>
+              <span class="faint">{current.profile?.address}:{current.profile?.port}{#if isActive(stats.profileId)} · {t('analytics.inUse')}{/if}</span>
+            </div>
             <span class="now {delayClass(stats.last ?? -1)}">{stats.last == null ? t('servers.timeout') : `${stats.last} ${t('common.ms')}`}</span>
           </div>
-          <Sparkline values={stats.history} width={300} height={46} />
+          <LatencyChart values={stats.history} />
           <div class="metrics">
             <div><span class="faint">{t('analytics.avg')}</span><b>{fmt(stats.avg)}</b></div>
             <div><span class="faint">{t('analytics.min')}</span><b>{fmt(stats.min)}</b></div>
@@ -81,7 +116,7 @@
           </div>
           <div class="faint probes">{t('analytics.probes', { sent: stats.sent, lost: stats.lost })}</div>
         </div>
-      {/each}
+      {/if}
     </div>
   {/if}
 </div>
@@ -141,35 +176,126 @@
     text-align: center;
   }
 
-  .nodes {
+  .split {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-template-columns: minmax(220px, 300px) 1fr;
     gap: 12px;
+    align-items: start;
+    min-width: 0;
   }
 
-  .node {
-    padding: 12px 14px;
+  .list {
+    padding: 6px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 2px;
+    max-height: 520px;
+    overflow: auto;
   }
 
-  .node.active {
-    border-color: var(--success);
-  }
-
-  .node-head {
+  .item {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
+    padding: 7px 8px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    min-width: 0;
   }
 
-  .node-name {
+  .item:hover {
+    background: var(--surface-2);
+  }
+
+  .item.selected {
+    background: var(--surface-3);
+  }
+
+  .avatar {
+    flex: none;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: 7px;
+    background: var(--surface-3);
+    font-size: 17px;
+  }
+
+  .avatar.big {
+    width: 38px;
+    height: 38px;
+    font-size: 24px;
+  }
+
+  .item-text {
     flex: 1;
-    font-weight: 600;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .item-name {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .badge-now {
+    font-size: 11px;
+    color: var(--success);
+  }
+
+  .item-delay {
+    font-variant-numeric: tabular-nums;
+    font-size: 12.5px;
+  }
+
+  .hint {
+    font-size: 12px;
+    padding: 6px 8px 2px;
+    margin: 0;
+  }
+
+  .detail {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .detail.active {
+    border-color: var(--success);
+  }
+
+  .detail-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .detail-title {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .detail-title h2 {
+    margin: 0;
+    font-size: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .detail-title span {
+    font-size: 12.5px;
   }
 
   .now {
@@ -181,7 +307,7 @@
     display: grid;
     grid-template-columns: repeat(5, 1fr);
     gap: 4px;
-    font-size: 12px;
+    font-size: 12.5px;
   }
 
   .metrics div {
@@ -190,7 +316,7 @@
   }
 
   .metrics b {
-    font-size: 14px;
+    font-size: 16px;
     font-variant-numeric: tabular-nums;
   }
 

@@ -31,12 +31,18 @@ pub fn build(profile: &Profile, settings: &Settings, env: &ConfigEnv, mode: Mode
             "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
             "mtu": t.mtu, "auto_route": true, "strict_route": t.strict_route, "stack": t.stack
         }));
+        if mode == Mode::TunNative {
+            // Local port used to check the server before the connection counts as connected.
+            inbounds.push(json!({"type": "mixed", "tag": "socks", "listen": "127.0.0.1", "listen_port": settings.proxy.socks_port}));
+        }
     } else {
         let listen = if settings.proxy.allow_lan { "0.0.0.0" } else { "127.0.0.1" };
         inbounds.push(json!({"type": "mixed", "tag": "socks", "listen": listen, "listen_port": settings.proxy.socks_port}));
         inbounds.push(json!({"type": "mixed", "tag": "http", "listen": listen, "listen_port": settings.proxy.http_port}));
     }
-    if settings.dns.local_dns {
+    // Over Xray the local DNS port belongs to Xray (both binding it made sing-box fail to start).
+    let local_dns = settings.dns.local_dns && mode != Mode::TunOverXray;
+    if local_dns {
         inbounds.push(json!({"type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": settings.dns.local_port}));
     }
 
@@ -50,7 +56,7 @@ pub fn build(profile: &Profile, settings: &Settings, env: &ConfigEnv, mode: Mode
 
     let mut config = json!({
         "log": log(settings),
-        "dns": dns(profile, settings, fake_dns),
+        "dns": dns(profile, settings, mode, fake_dns),
         "inbounds": inbounds,
         "outbounds": [proxy, {"type": "direct", "tag": "direct"}],
         "route": route(profile, settings, env, mode),
@@ -125,7 +131,7 @@ pub fn dns_server(spec: &str, tag: &str) -> Value {
     server
 }
 
-fn dns(profile: &Profile, settings: &Settings, fake_dns: bool) -> Value {
+fn dns(profile: &Profile, settings: &Settings, mode: Mode, fake_dns: bool) -> Value {
     let mut remote = dns_server(&remote_dns(profile, settings), "remote");
     remote["detour"] = json!("proxy");
     let direct = if settings.dns.direct.trim().is_empty() { "local" } else { settings.dns.direct.as_str() };
@@ -136,7 +142,11 @@ fn dns(profile: &Profile, settings: &Settings, fake_dns: bool) -> Value {
     }
     let mut servers = vec![remote, local];
     let mut rules = Vec::new();
-    if !is_ip(&profile.address) {
+    // The server's own name must resolve without the proxy. Over Xray, Xray resolves it with its
+    // direct DNS, whose packets skip sing-box (core processes go direct, before DNS hijacking),
+    // so the rule is only needed when that DNS is the system resolver.
+    let xray_resolves_directly = mode == Mode::TunOverXray && is_ip(&dns_host(&settings.dns.direct));
+    if !is_ip(&profile.address) && !xray_resolves_directly {
         rules.push(json!({"domain": [profile.address], "server": "local"}));
     }
     if settings.routing.preset == RoutingPreset::BypassLanRu {
@@ -156,18 +166,28 @@ fn dns(profile: &Profile, settings: &Settings, fake_dns: bool) -> Value {
 
 fn route(profile: &Profile, settings: &Settings, env: &ConfigEnv, mode: Mode) -> Value {
     let tun = mode != Mode::Proxy;
-    let mut rules = vec![json!({"action": "sniff"}), json!({"protocol": "dns", "action": "hijack-dns"})];
-    if settings.dns.local_dns {
-        rules.push(json!({"inbound": ["dns-in"], "action": "hijack-dns"}));
-    }
+    let mut rules = vec![json!({"action": "sniff"})];
     if tun {
-        // Core processes reach the proxy server directly; otherwise their traffic loops into the tunnel.
+        // Core processes (and their DNS queries) reach the network directly; otherwise their
+        // traffic loops into the tunnel.
         rules.push(json!({"process_name": env.core_process_names, "outbound": "direct"}));
     }
-    if is_ip(&profile.address) {
-        rules.push(json!({"ip_cidr": [profile.address], "outbound": "direct"}));
-    } else {
-        rules.push(json!({"domain": [profile.address], "outbound": "direct"}));
+    rules.push(json!({"protocol": "dns", "action": "hijack-dns"}));
+    if tun {
+        // Local network discovery caught by the TUN has no business on the proxy server.
+        rules.push(json!({"inbound": ["tun-in"], "ip_cidr": super::LOCAL_BROADCAST_CIDRS, "action": "reject"}));
+    }
+    if settings.dns.local_dns && mode != Mode::TunOverXray {
+        rules.push(json!({"inbound": ["dns-in"], "action": "hijack-dns"}));
+    }
+    // Over Xray the server is reached by xray.exe, matched above: leaving the server out keeps
+    // this config the same for every server, so switching servers does not restart the TUN.
+    if mode != Mode::TunOverXray {
+        if is_ip(&profile.address) {
+            rules.push(json!({"ip_cidr": [profile.address], "outbound": "direct"}));
+        } else {
+            rules.push(json!({"domain": [profile.address], "outbound": "direct"}));
+        }
     }
     if settings.routing.preset != RoutingPreset::Global {
         rules.push(json!({"ip_is_private": true, "outbound": "direct"}));

@@ -46,6 +46,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/fetch-cores.ps1
+      - name: Licenses of the bundled libraries
+        run: |
+          cargo fetch --target x86_64-pc-windows-msvc
+          python scripts/third_party_licenses.py
       - name: Updater signing
         id: signing
         shell: pwsh
@@ -76,7 +80,25 @@ jobs:
             Установщик для Windows 10/11 (x64): скачайте `*-setup.exe` и запустите.
             В комплекте последние Xray-core, sing-box и geoip/geosite.
             Уже установленное приложение обновится само (О программе → Проверить обновления).
+
+            Код приложения — MIT. Сторонние компоненты и их лицензии: [THIRD-PARTY-NOTICES.md](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/THIRD-PARTY-NOTICES.md).
+            Исходный код поставляемых версий sing-box и geo-данных (GPL-3.0) приложен к релизу ниже.
           releaseDraft: false
           prerelease: ${{ contains(env.TAG, '-') }}
           includeUpdaterJson: true
           args: ${{ steps.signing.outputs.args }}
+      # GPL-3.0 components (sing-box, geo data) are shipped as binaries: the complete source of
+      # the exact versions goes with every release (THIRD-PARTY-NOTICES.md points here).
+      - name: Attach the source of GPL components
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $sources = Get-Content src-tauri/resources/licenses/sources.json -Raw | ConvertFrom-Json
+          foreach ($s in (@($sources) | Where-Object { $_.attachSource })) {
+            $name = ($s.repo -split '/')[1]
+            $file = "$name-$($s.version)-source.tar.gz"
+            Invoke-WebRequest -Uri $s.archive -OutFile $file -Headers @{ 'User-Agent' = 'v2raysybau-ci' }
+            gh release upload $env:TAG $file --repo ${{ github.repository }} --clobber
+            if ($LASTEXITCODE -ne 0) { throw "upload of $file failed" }
+          }

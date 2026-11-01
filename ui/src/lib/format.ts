@@ -62,7 +62,6 @@ export function transportLabel(p: Profile): string {
   return `${p.transport.network.toUpperCase()}${security}${vision}`;
 }
 
-/** Country flag emoji at the start of a server name, used as the row avatar. */
 // Country names (English / Russian stems) for servers named "Germany 1", "Нидерланды" and so on.
 const COUNTRIES: Record<string, string[]> = {
   AE: ['emirates', 'uae', 'dubai', 'эмират', 'оаэ', 'дубай'],
