@@ -28,15 +28,67 @@
   let moreOpen = $state(false);
   let lastClicked = $state<string | null>(null);
 
+  // How the list is ordered on screen; the stored order (subscription order) is "default".
+  type SortMode = 'default' | 'delay-asc' | 'delay-desc' | 'protocol' | 'transport';
+  const SORT_KEY = 'servers.sort';
+  const PING_KEY = 'servers.pingMethod';
+  const stored = (key: string) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  const remember = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Storage unavailable: the choice just is not remembered.
+    }
+  };
+  const sortModes: SortMode[] = ['default', 'delay-asc', 'delay-desc', 'protocol', 'transport'];
+  let sortMode = $state<SortMode>(sortModes.find((m) => m === stored(SORT_KEY)) ?? 'default');
+  let sortMenu = $state<'delay' | 'kind' | null>(null);
+  let pingMenu = $state(false);
+  const pingMethods: TestMethod[] = ['real', 'tcp', 'icmp'];
+  let chosenMethod = $state<TestMethod>(pingMethods.find((m) => m === stored(PING_KEY)) ?? 'real');
+
+  function setSort(mode: SortMode) {
+    sortMode = mode;
+    sortMenu = null;
+    remember(SORT_KEY, mode);
+  }
+
+  // Untested servers and timeouts always go last, whichever way delays are sorted.
+  const delayKey = (p: Profile) => (p.delay.ms == null || p.delay.ms < 0 ? null : p.delay.ms);
+  function compare(a: Profile, b: Profile): number {
+    switch (sortMode) {
+      case 'delay-asc':
+      case 'delay-desc': {
+        const [x, y] = [delayKey(a), delayKey(b)];
+        if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
+        return sortMode === 'delay-asc' ? x - y : y - x;
+      }
+      case 'protocol':
+        return protocolLabel[a.protocol].localeCompare(protocolLabel[b.protocol]) || transportLabel(a).localeCompare(transportLabel(b));
+      case 'transport':
+        return transportLabel(a).localeCompare(transportLabel(b)) || protocolLabel[a.protocol].localeCompare(protocolLabel[b.protocol]);
+      default:
+        return 0;
+    }
+  }
+
   const groups = $derived([...new Set(app.profiles.map((p) => p.group))]);
-  const visible = $derived(
-    app.profiles.filter((p) => {
+  const visible = $derived.by(() => {
+    const list = app.profiles.filter((p) => {
       if (app.selectedGroup !== 'all' && p.group !== app.selectedGroup) return false;
       if (!search.trim()) return true;
       const q = search.toLowerCase();
       return p.name.toLowerCase().includes(q) || p.address.toLowerCase().includes(q) || p.protocol.includes(q);
-    }),
-  );
+    });
+    // Array.sort is stable: equal servers keep the stored order.
+    return sortMode === 'default' ? list : list.sort(compare);
+  });
   const selected = $derived(app.selection.filter((id) => visible.some((p) => p.id === id)));
   const focused = $derived(selected.length ? selected[selected.length - 1] : null);
   const chosen = $derived(app.profiles.find((p) => p.id === app.selectedId) ?? null);
@@ -58,8 +110,21 @@
     runTest(allTargets(), method);
   }
 
-  function testChosen() {
-    if (chosenTargets.length) runTest(chosenTargets, app.settings?.test.method ?? 'real');
+  function testChosen(method: TestMethod = chosenMethod) {
+    pingMenu = false;
+    if (method !== chosenMethod) {
+      chosenMethod = method;
+      remember(PING_KEY, method);
+    }
+    if (chosenTargets.length) runTest(chosenTargets, method);
+  }
+
+  const methodLabel = (m: TestMethod) => (m === 'real' ? t('servers.testReal') : m === 'tcp' ? t('servers.testTcp') : t('servers.testIcmp'));
+
+  // Column headers sort too: delay cycles fastest → slowest → stored order.
+  function headerSort(column: 'delay' | 'protocol' | 'transport') {
+    if (column === 'delay') setSort(sortMode === 'delay-asc' ? 'delay-desc' : sortMode === 'delay-desc' ? 'default' : 'delay-asc');
+    else setSort(sortMode === column ? 'default' : column);
   }
 
   function onRowClick(event: MouseEvent, profile: Profile) {
@@ -130,7 +195,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKeydown} onclick={() => ((menu = null), (moreOpen = false))} />
+<svelte:window onkeydown={onKeydown} onclick={() => ((menu = null), (moreOpen = false), (sortMenu = null), (pingMenu = false))} />
 
 <div class="page servers">
   <div class="hero card">
@@ -239,12 +304,79 @@
       <button class="btn small" onclick={() => test('tcp')}>{t('servers.testTcp')}</button>
       <button class="btn small" onclick={() => test('icmp')}>{t('servers.testIcmp')}</button>
       <span class="sep"></span>
-      <button class="btn small" disabled={!chosenTargets.length} onclick={testChosen} title="Ctrl+Shift+R" data-testid="test-chosen">
-        <Icon name="zap" size={14} />{selected.length > 1 ? t('servers.testSelected', { n: selected.length }) : t('servers.testChosen')}
-      </button>
+      <div class="split more">
+        <button
+          class="btn small split-main"
+          disabled={!chosenTargets.length}
+          onclick={() => testChosen()}
+          title="{methodLabel(chosenMethod)} · Ctrl+Shift+R"
+          data-testid="test-chosen"
+        >
+          <Icon name="zap" size={14} />{selected.length > 1 ? t('servers.testSelected', { n: selected.length }) : t('servers.testChosen')}
+          <span class="faint method">· {methodLabel(chosenMethod)}</span>
+        </button>
+        <button
+          class="btn small icon split-arrow"
+          disabled={!chosenTargets.length}
+          aria-label={t('servers.pingMethod')}
+          title={t('servers.pingMethod')}
+          data-testid="test-chosen-menu"
+          onclick={(e) => (e.stopPropagation(), (pingMenu = !pingMenu), (sortMenu = null))}
+        >
+          <Icon name="chevron" size={14} />
+        </button>
+        {#if pingMenu}
+          <div class="menu card left" role="menu">
+            {#each pingMethods as m}
+              <button onclick={() => testChosen(m)} data-testid="test-chosen-{m}">
+                <span class="tick">{#if m === chosenMethod}<Icon name="check" size={14} />{/if}</span>{methodLabel(m)}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
     {/if}
     <div class="spacer"></div>
-    <button class="btn small" onclick={() => api.sortByDelay()}><Icon name="sort" size={14} />{t('servers.sortByDelay')}</button>
+    <div class="more">
+      <button
+        class="btn small"
+        class:on={sortMode === 'delay-asc' || sortMode === 'delay-desc'}
+        data-testid="sort-delay"
+        onclick={(e) => (e.stopPropagation(), (sortMenu = sortMenu === 'delay' ? null : 'delay'), (pingMenu = false))}
+      >
+        <Icon name="sort" size={14} />{sortMode === 'delay-asc' ? t('servers.sort.fastFirst') : sortMode === 'delay-desc' ? t('servers.sort.slowFirst') : t('servers.sort.byDelay')}
+        <Icon name="chevron" size={13} />
+      </button>
+      {#if sortMenu === 'delay'}
+        <div class="menu card" role="menu">
+          {#each [['delay-asc', t('servers.sort.fastFirst')], ['delay-desc', t('servers.sort.slowFirst')], ['default', t('servers.sort.default')]] as [mode, label]}
+            <button onclick={() => setSort(mode as SortMode)} data-testid="sort-{mode}">
+              <span class="tick">{#if sortMode === mode}<Icon name="check" size={14} />{/if}</span>{label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    <div class="more">
+      <button
+        class="btn small"
+        class:on={sortMode === 'protocol' || sortMode === 'transport'}
+        data-testid="sort-kind"
+        onclick={(e) => (e.stopPropagation(), (sortMenu = sortMenu === 'kind' ? null : 'kind'), (pingMenu = false))}
+      >
+        <Icon name="layers" size={14} />{sortMode === 'protocol' ? t('servers.sort.byProtocol') : sortMode === 'transport' ? t('servers.sort.byTransport') : t('servers.sort.kind')}
+        <Icon name="chevron" size={13} />
+      </button>
+      {#if sortMenu === 'kind'}
+        <div class="menu card" role="menu">
+          {#each [['protocol', t('servers.sort.byProtocol')], ['transport', t('servers.sort.byTransport')], ['default', t('servers.sort.default')]] as [mode, label]}
+            <button onclick={() => setSort(mode as SortMode)} data-testid="sort-{mode}">
+              <span class="tick">{#if sortMode === mode}<Icon name="check" size={14} />{/if}</span>{label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
     <div class="more">
       <button class="btn small icon" onclick={(e) => (e.stopPropagation(), (moreOpen = !moreOpen))} aria-label="more"><Icon name="more" size={16} /></button>
       {#if moreOpen}
@@ -269,10 +401,16 @@
     <div class="table card">
       <div class="thead">
         <span class="c-name">{t('servers.col.name')}</span>
-        <span class="c-proto">{t('servers.col.protocol')}</span>
+        <button class="c-proto sortable" class:sorted={sortMode === 'protocol'} onclick={() => headerSort('protocol')}>
+          {t('servers.col.protocol')}{#if sortMode === 'protocol'}<Icon name="down" size={12} />{/if}
+        </button>
         <span class="c-addr">{t('servers.col.address')}</span>
-        <span class="c-transport">{t('servers.col.transport')}</span>
-        <span class="c-delay">{t('servers.col.delay')}</span>
+        <button class="c-transport sortable" class:sorted={sortMode === 'transport'} onclick={() => headerSort('transport')}>
+          {t('servers.col.transport')}{#if sortMode === 'transport'}<Icon name="down" size={12} />{/if}
+        </button>
+        <button class="c-delay sortable" class:sorted={sortMode.startsWith('delay')} onclick={() => headerSort('delay')} data-testid="col-delay">
+          {t('servers.col.delay')}{#if sortMode === 'delay-asc'}<Icon name="up" size={12} />{:else if sortMode === 'delay-desc'}<Icon name="down" size={12} />{/if}
+        </button>
         <span class="c-loss">{t('servers.col.loss')}</span>
       </div>
       <div class="tbody">
@@ -475,6 +613,7 @@
 
   .toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     min-height: 30px;
@@ -529,6 +668,7 @@
 
   .label {
     font-size: 12.5px;
+    white-space: nowrap;
   }
 
   .sep {
@@ -598,6 +738,60 @@
 
   .menu button:hover {
     background: var(--surface-2);
+  }
+
+  .menu.left {
+    left: 0;
+    right: auto;
+    min-width: 200px;
+  }
+
+  .tick {
+    display: inline-flex;
+    width: 14px;
+    color: var(--accent);
+  }
+
+  .split {
+    display: inline-flex;
+  }
+
+  .split-main {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .split-arrow {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: none;
+  }
+
+  .method {
+    font-weight: 400;
+  }
+
+  .btn.on {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .sortable {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .sortable:hover,
+  .sortable.sorted {
+    color: var(--text);
   }
 
   .menu .danger {

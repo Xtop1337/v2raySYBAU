@@ -74,7 +74,6 @@ pub fn run() {
             commands::delete_profiles,
             commands::remove_duplicates,
             commands::remove_unreachable,
-            commands::sort_by_delay,
             commands::reorder_profiles,
             commands::share_links,
             commands::export_profiles,

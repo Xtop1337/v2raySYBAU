@@ -131,7 +131,9 @@ fn tun_inbound(settings: &Settings, sniffing: Value) -> Value {
             "mtu": settings.tun.mtu.clamp(1280, 9000),
             "gateway": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
             "dns": ["1.1.1.1"],
-            "autoSystemRoutingTable": ["0.0.0.0/0", "::/0"],
+            // Two halves instead of one default route: more specific than the system default
+            // route, so they win whatever metric Windows gives the physical adapter.
+            "autoSystemRoutingTable": ["0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"],
             "autoSystemWfpBlockLeak": block_leaks
         },
         "sniffing": sniffing
@@ -206,6 +208,9 @@ fn routing(settings: &Settings, env: &ConfigEnv, mode: XrayMode) -> Value {
     if tun {
         // System DNS queries reach the TUN and are answered by Xray's DNS module.
         rules.push(json!({"type": "field", "inboundTag": [TUN_TAG], "port": "53", "outboundTag": "dns-out"}));
+        // Local network discovery (mDNS, SSDP, LLMNR, NetBIOS broadcasts) caught by the TUN has
+        // no business on the proxy server.
+        rules.push(json!({"type": "field", "inboundTag": [TUN_TAG], "ip": super::LOCAL_BROADCAST_CIDRS, "outboundTag": "block"}));
         if settings.tun.app_mode == TunAppMode::Exclude && !apps.is_empty() {
             rules.push(json!({"type": "field", "inboundTag": [TUN_TAG], "process": apps, "outboundTag": "direct"}));
         }

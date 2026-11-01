@@ -58,12 +58,6 @@ pub async fn remove_unreachable(service: Svc<'_>, group: Option<String>) -> CmdR
 }
 
 #[tauri::command]
-pub async fn sort_by_delay(service: Svc<'_>) -> CmdResult<()> {
-    service.sort_by_delay().await;
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn reorder_profiles(service: Svc<'_>, ids: Vec<Uuid>) -> CmdResult<()> {
     service.reorder(ids).await;
     Ok(())

@@ -31,6 +31,10 @@ pub fn build(profile: &Profile, settings: &Settings, env: &ConfigEnv, mode: Mode
             "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
             "mtu": t.mtu, "auto_route": true, "strict_route": t.strict_route, "stack": t.stack
         }));
+        if mode == Mode::TunNative {
+            // Local port used to check the server before the connection counts as connected.
+            inbounds.push(json!({"type": "mixed", "tag": "socks", "listen": "127.0.0.1", "listen_port": settings.proxy.socks_port}));
+        }
     } else {
         let listen = if settings.proxy.allow_lan { "0.0.0.0" } else { "127.0.0.1" };
         inbounds.push(json!({"type": "mixed", "tag": "socks", "listen": listen, "listen_port": settings.proxy.socks_port}));
@@ -169,6 +173,10 @@ fn route(profile: &Profile, settings: &Settings, env: &ConfigEnv, mode: Mode) ->
         rules.push(json!({"process_name": env.core_process_names, "outbound": "direct"}));
     }
     rules.push(json!({"protocol": "dns", "action": "hijack-dns"}));
+    if tun {
+        // Local network discovery caught by the TUN has no business on the proxy server.
+        rules.push(json!({"inbound": ["tun-in"], "ip_cidr": super::LOCAL_BROADCAST_CIDRS, "action": "reject"}));
+    }
     if settings.dns.local_dns && mode != Mode::TunOverXray {
         rules.push(json!({"inbound": ["dns-in"], "action": "hijack-dns"}));
     }

@@ -6,7 +6,7 @@
   import { importFiles } from '../lib/actions';
   import { api } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
-  import { app, errorText, saveSettings, toast } from '../lib/store.svelte';
+  import { app, applyScale, errorText, saveSettings, toast, UI_SCALES } from '../lib/store.svelte';
 
   const s = $derived(app.settings!);
   let newApp = $state('');
@@ -114,6 +114,12 @@
           <button class:active={s.general.theme === theme} onclick={() => ((s.general.theme = theme), now())}>{t(`settings.theme.${theme}`)}</button>
         {/each}
       </div>
+    </div>
+    <div class="field">
+      <span>{t('settings.uiScale')}</span>
+      <select class="select" bind:value={s.general.uiScale} onchange={() => (applyScale(), now())} data-testid="ui-scale">
+        {#each UI_SCALES as scale}<option value={scale}>{scale}%</option>{/each}
+      </select>
     </div>
     <Toggle bind:checked={s.general.autostart} label={t('settings.autostart')} onchange={now} />
     <Toggle bind:checked={s.general.startMinimized} label={t('settings.startMinimized')} onchange={now} />

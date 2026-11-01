@@ -102,11 +102,11 @@ pub struct StartOptions {
 impl StartOptions {
     pub fn for_plan(plan: &LaunchPlan, settings: &crate::settings::Settings) -> Self {
         let tun = settings.proxy.mode == crate::settings::ConnectionMode::Tun;
-        // Xray always exposes SOCKS (sing-box TUN forwards to it); sing-box does only in proxy mode.
-        let has_socks = plan.xray.is_some() || !tun;
-        let mut ports = Vec::new();
-        if has_socks {
-            ports.extend([settings.proxy.socks_port, settings.proxy.http_port]);
+        // Every plan has a local SOCKS port (also in TUN mode): it is how the connection is
+        // checked before it is reported as connected.
+        let mut ports = vec![settings.proxy.socks_port];
+        if plan.xray.is_some() || !tun {
+            ports.push(settings.proxy.http_port);
         }
         if plan.xray.is_some() {
             ports.push(settings.advanced.api_port);
@@ -114,7 +114,7 @@ impl StartOptions {
         if settings.dns.local_dns {
             ports.push(settings.dns.local_port);
         }
-        StartOptions { ready_port: has_socks.then_some(settings.proxy.socks_port), ports, tun }
+        StartOptions { ready_port: Some(settings.proxy.socks_port), ports, tun }
     }
 }
 
@@ -194,6 +194,23 @@ impl CoreManager {
                     self.stop().await;
                     bail!("sing-box exited right after start, see the journal (TUN needs administrator rights)");
                 }
+            }
+        }
+        if options.tun && !keep_singbox {
+            // The SOCKS port answers before the TUN adapter and its routes exist (Xray needs a
+            // second or two to create them): until then applications still go direct. The
+            // connection only counts once Windows routes internet traffic into the tunnel.
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+            while !tun_routes_traffic() {
+                if tokio::time::Instant::now() >= deadline {
+                    self.stop().await;
+                    bail!("TUN_NO_ROUTE");
+                }
+                if !self.is_running() {
+                    self.stop().await;
+                    bail!("the core exited while creating the TUN adapter, see the journal");
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
         }
         Ok(())
@@ -339,6 +356,12 @@ async fn wait_tun_removed() {
 
 #[cfg(windows)]
 fn adapter_exists(name: &str) -> bool {
+    adapter_index(name).is_some()
+}
+
+/// Interface index of the adapter with this friendly name.
+#[cfg(windows)]
+fn adapter_index(name: &str) -> Option<u32> {
     use windows::Win32::NetworkManagement::IpHelper::{
         GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_UNICAST,
         IP_ADAPTER_ADDRESSES_LH,
@@ -355,19 +378,43 @@ fn adapter_exists(name: &str) -> bool {
             continue; // ERROR_BUFFER_OVERFLOW: `size` now holds the needed size
         }
         if status != 0 {
-            return false;
+            return None;
         }
         let mut current = first.cast_const();
         while !current.is_null() {
             let adapter = unsafe { &*current };
             if unsafe { adapter.FriendlyName.to_string() }.is_ok_and(|n| n.eq_ignore_ascii_case(name)) {
-                return true;
+                return Some(unsafe { adapter.Anonymous1.Anonymous.IfIndex });
             }
             current = adapter.Next;
         }
-        return false;
+        return None;
     }
-    false
+    None
+}
+
+/// The TUN adapter exists and Windows sends internet traffic (to 1.1.1.1) through it.
+#[cfg(windows)]
+pub fn tun_routes_traffic() -> bool {
+    use windows::Win32::NetworkManagement::IpHelper::GetBestInterfaceEx;
+    use windows::Win32::Networking::WinSock::{AF_INET, IN_ADDR, IN_ADDR_0, SOCKADDR, SOCKADDR_IN};
+    let Some(tun) = adapter_index(crate::config::singbox::TUN_INTERFACE) else {
+        return false;
+    };
+    let target = SOCKADDR_IN {
+        sin_family: AF_INET,
+        sin_port: 0,
+        sin_addr: IN_ADDR { S_un: IN_ADDR_0 { S_addr: u32::from_ne_bytes([1, 1, 1, 1]) } },
+        sin_zero: [0; 8],
+    };
+    let mut best = 0u32;
+    let status = unsafe { GetBestInterfaceEx(std::ptr::from_ref(&target).cast::<SOCKADDR>(), &mut best) };
+    status == 0 && best == tun
+}
+
+#[cfg(not(windows))]
+pub fn tun_routes_traffic() -> bool {
+    true
 }
 
 pub fn write_config(path: &Path, config: &Value) -> Result<()> {

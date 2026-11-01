@@ -1,6 +1,7 @@
 // Global reactive state (Svelte 5 runes) fed by the backend snapshot and events.
 
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { api } from './api';
 import { flagOfCode } from './format';
@@ -82,26 +83,37 @@ export function hideConnecting() {
   tunnelToast = null;
 }
 
+// Only the outcome of the latest connection stays on screen (rapid switching would stack them).
+let checkToast: number | null = null;
+
 function reportCheck(check: ConnectionCheck) {
   hideConnecting();
+  if (checkToast !== null) dismissToast(checkToast);
+  checkToast = toastCheck(check);
+}
+
+function toastCheck(check: ConnectionCheck): number | null {
   const exit = check.exit ? `${flagOfCode(check.exit.country)} ${check.exit.ip}`.trim() : '';
   switch (check.problem) {
     case null: {
       // 2ip.ru and other Russian sites show the user's own IP with this preset, on purpose.
       const ru = app.settings?.routing.preset === 'bypassLanRu' ? ` ${t('connect.ruDirect')}` : '';
-      toast(t('connect.created', { ip: exit }) + ru, 'success', ru ? 9000 : 6000);
-      break;
+      return toast(t('connect.created', { ip: exit }) + ru, 'success', ru ? 9000 : 6000);
     }
-    case 'no-traffic':
-      toast(t('connect.noTraffic', { name: check.profileName }), 'error', 10000);
-      break;
+    case 'unreachable':
+      return toast(t('connect.unreachable', { name: check.profileName }), 'error', 10000);
+    case 'tun-no-route':
+      return toast(t('connect.tunNoRoute'), 'error', 12000);
+    case 'tun-leak':
+      return toast(t('connect.tunLeak'), 'error', 12000);
+    case 'error':
+      return toast(t('connect.failed', { name: check.profileName, detail: check.detail ?? '' }), 'error', 10000);
     case 'direct':
-      toast(t('connect.direct', { ip: exit }), 'error', 12000);
-      break;
+      return toast(t('connect.direct', { ip: exit }), 'error', 12000);
     case 'system-proxy':
-      toast(t('connect.systemProxy', { detail: check.detail ?? '' }), 'error', 12000);
-      break;
+      return toast(t('connect.systemProxy', { detail: check.detail ?? '' }), 'error', 12000);
   }
+  return null;
 }
 
 export function errorText(e: unknown): string {
@@ -122,6 +134,16 @@ export function applyTheme() {
 }
 
 darkQuery.addEventListener('change', applyTheme);
+
+export const UI_SCALES = [80, 90, 100, 110, 125, 150, 175];
+
+/** Interface scale from the settings, applied as the page zoom of the window. */
+export function applyScale() {
+  const scale = app.settings?.general.uiScale || 100;
+  getCurrentWebview()
+    .setZoom(Math.min(200, Math.max(50, scale)) / 100)
+    .catch(() => {});
+}
 
 export function applyLanguage() {
   const lang = resolveLanguage(app.settings?.general.language ?? 'auto');
@@ -171,6 +193,7 @@ export async function init() {
   for (const stats of await api.nodeStats()) app.nodeStats[stats.profileId] = stats;
   applyTheme();
   applyLanguage();
+  applyScale();
 
   await listen<Profile[]>('profiles', (e) => {
     app.profiles = e.payload;
@@ -180,6 +203,7 @@ export async function init() {
   await listen<Settings>('settings', (e) => {
     app.settings = e.payload;
     applyTheme();
+    applyScale();
   });
   await listen<ConnectionInfo>('connection', (e) => {
     if (e.payload.since !== app.connection.since || !e.payload.connected) app.check = null;
@@ -208,6 +232,8 @@ export async function init() {
     if (app.logs.length > MAX_LOGS) app.logs.splice(0, app.logs.length - MAX_LOGS);
   });
   await listen<string>('core-error', (e) => toast(e.payload, 'error', 7000));
+  // Every connect (button, tray, auto-connect after the restart as administrator) announces itself.
+  await listen<string>('connecting', () => showConnecting());
   await listen<ConnectionCheck>('connection-check', (e) => {
     app.check = e.payload;
     reportCheck(e.payload);

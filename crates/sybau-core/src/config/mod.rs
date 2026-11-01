@@ -61,6 +61,9 @@ pub fn plan(profile: &Profile, settings: &Settings, env: &ConfigEnv) -> LaunchPl
 }
 
 /// Private and reserved ranges that never go through the proxy.
+/// Multicast and broadcast destinations (and the TUN's own subnet), never sent to the server.
+pub const LOCAL_BROADCAST_CIDRS: &[&str] = &["224.0.0.0/4", "255.255.255.255/32", "172.19.0.0/30", "ff00::/8", "fdfe:dcba:9876::/126"];
+
 pub const PRIVATE_CIDRS: &[&str] = &[
     "10.0.0.0/8",
     "100.64.0.0/10",

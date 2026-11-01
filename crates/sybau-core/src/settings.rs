@@ -46,6 +46,8 @@ pub struct GeneralSettings {
     pub start_minimized: bool,
     pub update_subscriptions_on_start: bool,
     pub check_updates: bool,
+    /// Interface scale, percent (100 = normal).
+    pub ui_scale: u32,
 }
 
 impl Default for GeneralSettings {
@@ -62,6 +64,7 @@ impl Default for GeneralSettings {
             start_minimized: false,
             update_subscriptions_on_start: true,
             check_updates: true,
+            ui_scale: 100,
         }
     }
 }
