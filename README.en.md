@@ -62,22 +62,6 @@ Core tests. With the paths to real cores, every generated config is checked by `
 XRAY_BIN=/path/to/xray SINGBOX_BIN=/path/to/sing-box cargo test --workspace
 ```
 
-## Releases and auto-update
-
-- Every push runs CI: linters, tests with the real cores and a Windows installer build. The installer is available in the workflow artifacts.
-- To publish a release, push a tag such as `v1.0.1`, or run **Actions → Release → Run workflow** with the version (the "replace" option rebuilds an existing release of the same version). The `release.yml` workflow sets the version, downloads fresh cores, builds the NSIS installer and publishes the release with `latest.json` for the built-in updater, the license files and the source code of the GPL components.
-
-```bash
-git tag v1.0.1
-```
-
-```bash
-git push origin v1.0.1
-```
-
-- Updates are signed. The public key is already in `src-tauri/tauri.conf.json`; add the private key as the repository secret **`TAURI_SIGNING_PRIVATE_KEY`** (Settings → Secrets and variables → Actions). Without it the release is still built, but installed copies cannot update automatically.
-- Create your own key pair with `pnpm tauri signer generate` and put the public key into `plugins.updater.pubkey`.
-
 ## Structure
 
 | Directory | Contents |
