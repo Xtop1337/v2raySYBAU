@@ -84,6 +84,7 @@ def pnpm_licenses(*args: str) -> dict:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         shell=sys.platform == "win32",
     )
     return json.loads(result.stdout or "{}")
