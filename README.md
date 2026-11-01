@@ -62,22 +62,6 @@ pnpm tauri build --bundles nsis --config src-tauri/tauri.no-updater.conf.json
 XRAY_BIN=/path/to/xray SINGBOX_BIN=/path/to/sing-box cargo test --workspace
 ```
 
-## Выпуск релиза и автообновление
-
-- Каждый push запускает CI: линтеры, тесты с настоящими ядрами и сборку установщика Windows. Установщик доступен в артефактах workflow.
-- Чтобы выпустить релиз, создайте и отправьте тег, например `v1.0.1`, или запустите **Actions → Release → Run workflow** с номером версии (опция «replace» пересобирает уже существующий релиз той же версии). Workflow `release.yml` выставит версию, скачает свежие ядра, соберёт NSIS-установщик и опубликует релиз вместе с `latest.json` для встроенного обновления, файлами лицензий и исходным кодом GPL-компонентов.
-
-```bash
-git tag v1.0.1
-```
-
-```bash
-git push origin v1.0.1
-```
-
-- Обновления подписываются ключом. Публичный ключ уже лежит в `src-tauri/tauri.conf.json`, а приватный нужно добавить в секрет репозитория **`TAURI_SIGNING_PRIVATE_KEY`** (Settings → Secrets and variables → Actions). Если секрета нет, релиз соберётся, но установленные копии не смогут обновиться автоматически.
-- Свою пару ключей можно создать командой `pnpm tauri signer generate`. Публичный ключ запишите в `plugins.updater.pubkey`.
-
 ## Устройство
 
 | Каталог | Что внутри |
