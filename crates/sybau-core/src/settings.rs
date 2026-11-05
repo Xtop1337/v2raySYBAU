@@ -48,6 +48,12 @@ pub struct GeneralSettings {
     pub check_updates: bool,
     /// Interface scale, percent (100 = normal).
     pub ui_scale: u32,
+    /// A release the user chose to skip: the launch check does not show it again.
+    pub skipped_version: Option<String>,
+    /// Look for programs that break the connection (WARP, zapret, other VPN clients) at launch.
+    pub check_conflicts: bool,
+    /// Hide server addresses, exit IPs, subscription links and local paths (for streaming).
+    pub streamer_mode: bool,
 }
 
 impl Default for GeneralSettings {
@@ -65,6 +71,9 @@ impl Default for GeneralSettings {
             update_subscriptions_on_start: true,
             check_updates: true,
             ui_scale: 100,
+            skipped_version: None,
+            check_conflicts: true,
+            streamer_mode: false,
         }
     }
 }

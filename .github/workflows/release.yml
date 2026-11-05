@@ -1,7 +1,8 @@
 name: Release
 
 # Push a tag like v1.0.1 (or run this workflow from the Actions tab with a version) to publish
-# a GitHub release with the NSIS installer and the latest.json manifest read by the updater.
+# a GitHub release with the NSIS installer. Installed apps notice the new release by themselves
+# (GitHub Releases API) and show its notes; they do not update automatically.
 on:
   push:
     tags: ['v*']
@@ -24,8 +25,6 @@ jobs:
     runs-on: windows-latest
     env:
       TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -50,16 +49,6 @@ jobs:
         run: |
           cargo fetch --target x86_64-pc-windows-msvc
           python scripts/third_party_licenses.py
-      - name: Updater signing
-        id: signing
-        shell: pwsh
-        run: |
-          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
-            "args=--bundles nsis" >> $env:GITHUB_OUTPUT
-          } else {
-            Write-Warning 'TAURI_SIGNING_PRIVATE_KEY secret is not set: the release is built without updater signatures.'
-            "args=--bundles nsis --config src-tauri/tauri.no-updater.conf.json" >> $env:GITHUB_OUTPUT
-          }
       - name: Delete the existing release
         if: github.event_name == 'workflow_dispatch' && inputs.replace
         shell: pwsh
@@ -79,14 +68,13 @@ jobs:
           releaseBody: |
             Установщик для Windows 10/11 (x64): скачайте `*-setup.exe` и запустите.
             В комплекте последние Xray-core, sing-box и geoip/geosite.
-            Уже установленное приложение обновится само (О программе → Проверить обновления).
+            Уже установленное приложение сообщит о новой версии при запуске и покажет, что изменилось.
 
             Код приложения — MIT. Сторонние компоненты и их лицензии: [THIRD-PARTY-NOTICES.md](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/THIRD-PARTY-NOTICES.md).
             Исходный код поставляемых версий sing-box и geo-данных (GPL-3.0) приложен к релизу ниже.
           releaseDraft: false
           prerelease: ${{ contains(env.TAG, '-') }}
-          includeUpdaterJson: true
-          args: ${{ steps.signing.outputs.args }}
+          args: --bundles nsis
       # GPL-3.0 components (sing-box, geo data) are shipped as binaries: the complete source of
       # the exact versions goes with every release (THIRD-PARTY-NOTICES.md points here).
       - name: Attach the source of GPL components

@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  AppUpdate,
+  Conflict,
   ConnectionInfo,
   CoreVersions,
   ImportSummary,
@@ -8,6 +10,7 @@ import type {
   Profile,
   Settings,
   Snapshot,
+  StopResult,
   Subscription,
   TestMethod,
   TrafficSample,
@@ -44,6 +47,10 @@ export const api = {
   processes: () => invoke<string[]>('list_processes'),
   restartAsAdmin: () => invoke<void>('restart_as_admin'),
   coreVersions: () => invoke<CoreVersions>('core_versions'),
+  checkAppUpdate: () => invoke<AppUpdate | null>('check_app_update'),
+  factoryReset: (everything: boolean) => invoke<Settings>('factory_reset', { everything }),
+  detectConflicts: () => invoke<Conflict[]>('detect_conflicts'),
+  stopConflicts: (ids: string[]) => invoke<StopResult[]>('stop_conflicts', { ids }),
   updateCore: (kind: 'xray' | 'singbox' | 'geo') => invoke<string>('update_core', { kind }),
   setUiLanguage: (language: string) => invoke<void>('set_ui_language', { language }),
   openDataDir: () => invoke<void>('open_data_dir'),

@@ -1,5 +1,6 @@
-//! Updates from GitHub Releases: release lookup and core (Xray, sing-box, geo files) updates.
-//! The application itself is updated by the Tauri updater plugin from the same releases.
+//! Updates from GitHub Releases: release lookup, core (Xray, sing-box, geo files) updates and
+//! the list of newer application releases (the app only notifies about them, it does not
+//! install itself).
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -86,6 +87,25 @@ pub async fn latest_release(client: &reqwest::Client, repo: &str, allow_prerelea
     let releases: Vec<Release> =
         client.get(url).header("Accept", "application/vnd.github+json").send().await?.error_for_status()?.json().await?;
     releases.into_iter().find(|r| !r.draft && (allow_prerelease || !r.prerelease)).ok_or_else(|| anyhow!("no releases in {repo}"))
+}
+
+pub const APP_REPO: &str = "Xtop1337/v2raySYBAU";
+
+/// Published application releases newer than `current`, newest first (no drafts; pre-releases
+/// only when allowed).
+pub fn newer_releases(releases: Vec<Release>, current: &str, allow_prerelease: bool) -> Vec<Release> {
+    let mut newer: Vec<Release> =
+        releases.into_iter().filter(|r| !r.draft && (allow_prerelease || !r.prerelease) && is_newer(&r.tag_name, current)).collect();
+    newer.sort_by_key(|r| std::cmp::Reverse(r.version()));
+    newer
+}
+
+/// The application's releases on GitHub. `SYBAU_RELEASES_URL` points elsewhere (used by tests).
+pub async fn app_releases(client: &reqwest::Client) -> Result<Vec<Release>> {
+    let url =
+        std::env::var("SYBAU_RELEASES_URL").unwrap_or_else(|_| format!("https://api.github.com/repos/{APP_REPO}/releases?per_page=20"));
+    let response = client.get(url).header("Accept", "application/vnd.github+json").timeout(Duration::from_secs(20)).send().await?;
+    Ok(response.error_for_status()?.json().await?)
 }
 
 pub async fn download(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
@@ -192,6 +212,35 @@ pub async fn update_geo(client: &reqwest::Client, dir: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    fn release(tag: &str, draft: bool, prerelease: bool) -> Release {
+        Release {
+            tag_name: tag.into(),
+            name: None,
+            body: Some(format!("notes {tag}")),
+            html_url: format!("https://github.com/{APP_REPO}/releases/tag/{tag}"),
+            prerelease,
+            draft,
+            published_at: None,
+            assets: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn only_newer_published_releases_newest_first() {
+        let all = vec![
+            release("v1.0.5", false, false),
+            release("v1.0.8", false, false),
+            release("v1.0.9-beta", false, true),
+            release("v1.0.7", false, false),
+            release("v1.1.0", true, false),
+            release("v1.0.6", false, false),
+        ];
+        let tags = |allow| newer_releases(all.clone(), "1.0.6", allow).into_iter().map(|r| r.tag_name).collect::<Vec<_>>();
+        assert_eq!(tags(false), ["v1.0.8", "v1.0.7"]);
+        assert_eq!(tags(true), ["v1.0.9-beta", "v1.0.8", "v1.0.7"]);
+        assert!(newer_releases(vec![release("v1.0.6", false, false)], "1.0.6", false).is_empty());
+    }
 
     #[test]
     fn compares_versions() {

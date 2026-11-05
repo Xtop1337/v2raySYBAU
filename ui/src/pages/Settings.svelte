@@ -5,8 +5,10 @@
   import Toggle from '../components/Toggle.svelte';
   import { importFiles } from '../lib/actions';
   import { api } from '../lib/api';
+  import { checkConflicts } from '../lib/conflicts.svelte';
+  import { ask } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
-  import { app, applyScale, errorText, saveSettings, toast, UI_SCALES } from '../lib/store.svelte';
+  import { app, applyLanguage, applyScale, applyTheme, errorText, saveSettings, toast, UI_SCALES } from '../lib/store.svelte';
 
   const s = $derived(app.settings!);
   let newApp = $state('');
@@ -73,6 +75,37 @@
     }
   }
 
+  // Factory reset: settings only, or settings with servers and subscriptions.
+  async function factoryReset() {
+    const choice = await ask(t('settings.resetConfirm'), [
+      { id: 'cancel', label: t('common.cancel') },
+      { id: 'settings', label: t('settings.resetSettings'), kind: 'primary' },
+      { id: 'all', label: t('settings.resetAll'), kind: 'danger' },
+    ]);
+    if (choice !== 'settings' && choice !== 'all') return;
+    try {
+      const everything = choice === 'all';
+      app.settings = await api.factoryReset(everything);
+      // Interface choices kept in this window (list sorting, ping method).
+      try {
+        localStorage.clear();
+      } catch {
+        // Storage unavailable: nothing was stored either.
+      }
+      if (everything) {
+        app.nodeStats = {};
+        app.selectedId = null;
+        app.selection = [];
+      }
+      applyTheme();
+      applyLanguage();
+      applyScale();
+      toast(t(everything ? 'settings.resetDoneAll' : 'settings.resetDone'), 'success');
+    } catch (e) {
+      toast(errorText(e), 'error');
+    }
+  }
+
   async function exportBackup() {
     const path = await save({ defaultPath: 'v2raysybau-backup.json', filters: [{ name: 'JSON', extensions: ['json'] }] });
     if (!path) return;
@@ -128,6 +161,8 @@
     <Toggle bind:checked={s.general.updateSubscriptionsOnStart} label={t('settings.updateSubsOnStart')} onchange={now} />
     <Toggle bind:checked={s.general.confirmDelete} label={t('settings.confirmDelete')} onchange={now} />
     <Toggle bind:checked={s.general.showSpeed} label={t('settings.showSpeed')} onchange={now} />
+    <Toggle bind:checked={s.general.streamerMode} label={t('settings.streamerMode')} onchange={now} />
+    <span class="faint hint">{t('settings.streamerModeHint')}</span>
     <Toggle bind:checked={s.general.minimizeToTray} label={t('settings.minimizeToTray')} onchange={now} />
   </section>
 
@@ -313,6 +348,10 @@
     <Toggle bind:checked={s.advanced.accessLog} label={t('settings.accessLog')} onchange={now} />
     <Toggle bind:checked={s.advanced.allowInsecure} label={t('settings.allowInsecure')} onchange={now} />
     <Toggle bind:checked={s.general.checkUpdates} label={t('settings.checkUpdates')} onchange={now} />
+    <div class="field">
+      <Toggle bind:checked={s.general.checkConflicts} label={t('settings.checkConflicts')} onchange={now} />
+      <button class="btn small" onclick={() => checkConflicts(false)} data-testid="check-conflicts">{t('settings.checkConflictsNow')}</button>
+    </div>
     <Toggle bind:checked={s.advanced.updatePrerelease} label={t('settings.prerelease')} onchange={now} />
     <div class="field col"><span>{t('settings.subUserAgent')}</span><input class="input" bind:value={s.advanced.subscriptionUserAgent} onchange={changed} /></div>
     <div class="field"><span>{t('settings.apiPort')}</span><input class="input num" type="number" bind:value={s.advanced.apiPort} onchange={changed} /></div>
@@ -326,6 +365,11 @@
       <button class="btn" onclick={exportBackup}><Icon name="download" size={15} />{t('settings.exportBackup')}</button>
       <button class="btn" onclick={() => importFiles()}><Icon name="upload" size={15} />{t('settings.importBackup')}</button>
       <button class="btn" onclick={() => api.openDataDir()}><Icon name="folder" size={15} />{t('settings.openDataDir')}</button>
+    </div>
+    <h3 class="sub">{t('settings.reset')}</h3>
+    <span class="faint hint">{t('settings.resetHint')}</span>
+    <div class="row wrap">
+      <button class="btn danger" onclick={factoryReset} data-testid="factory-reset"><Icon name="refresh" size={15} />{t('settings.resetButton')}</button>
     </div>
   </section>
 </div>

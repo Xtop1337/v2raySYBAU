@@ -1,6 +1,7 @@
 //! Windows integration: system proxy, elevation, running processes. No-ops on other platforms
 //! so the application still builds and runs (proxy mode) for development.
 
+pub mod conflicts;
 pub mod processes;
 pub mod sysproxy;
 

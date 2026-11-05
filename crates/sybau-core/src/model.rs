@@ -283,6 +283,8 @@ pub struct Subscription {
     pub download: Option<u64>,
     pub total: Option<u64>,
     pub expire: Option<i64>,
+    /// Provider's page from the `profile-web-page-url` header (opened from the subscription card).
+    pub web_page_url: Option<String>,
 }
 
 impl Default for Subscription {
@@ -300,6 +302,7 @@ impl Default for Subscription {
             download: None,
             total: None,
             expire: None,
+            web_page_url: None,
         }
     }
 }

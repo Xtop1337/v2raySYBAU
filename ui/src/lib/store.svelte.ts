@@ -5,6 +5,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { api } from './api';
 import { flagOfCode } from './format';
+import { hide } from './privacy';
 import { resolveLanguage, setLanguage, t } from './i18n.svelte';
 import type {
   ConnectionCheck,
@@ -70,6 +71,10 @@ export function dismissToast(id: number) {
   toasts.list = toasts.list.filter((t) => t.id !== id);
 }
 
+export function dismissAllToasts() {
+  toasts.list = [];
+}
+
 // "Creating the tunnel…" stays on screen until the traffic check of that connection reports.
 let tunnelToast: number | null = null;
 
@@ -93,7 +98,7 @@ function reportCheck(check: ConnectionCheck) {
 }
 
 function toastCheck(check: ConnectionCheck): number | null {
-  const exit = check.exit ? `${flagOfCode(check.exit.country)} ${check.exit.ip}`.trim() : '';
+  const exit = check.exit ? `${flagOfCode(check.exit.country)} ${hide(check.exit.ip)}`.trim() : '';
   switch (check.problem) {
     case null: {
       // 2ip.ru and other Russian sites show the user's own IP with this preset, on purpose.

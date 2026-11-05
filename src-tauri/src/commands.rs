@@ -11,7 +11,7 @@ use sybau_core::testing::NodeStats;
 use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 
-use crate::service::{ConnectionInfo, CoreVersions, ImportSummary, Service, Snapshot};
+use crate::service::{AppUpdate, ConnectionInfo, CoreVersions, ImportSummary, Service, Snapshot};
 use crate::tray::TrayLanguage;
 use crate::win;
 
@@ -171,6 +171,34 @@ pub async fn restart_as_admin(app: AppHandle, service: Svc<'_>) -> CmdResult<()>
     service.shutdown().await;
     app.exit(0);
     Ok(())
+}
+
+/// Programs running now that may break the connection (WARP, zapret, other clients).
+#[tauri::command]
+pub async fn detect_conflicts(service: Svc<'_>) -> CmdResult<Vec<win::conflicts::Conflict>> {
+    let dir = service.cores_dir();
+    tauri::async_runtime::spawn_blocking(move || win::conflicts::detect(&dir)).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn stop_conflicts(service: Svc<'_>, ids: Vec<String>) -> CmdResult<Vec<win::conflicts::StopResult>> {
+    let dir = service.cores_dir();
+    let results = tauri::async_runtime::spawn_blocking(move || win::conflicts::stop(&ids, &dir)).await.map_err(|e| e.to_string())?;
+    for r in &results {
+        let outcome = if r.ok { "stopped".to_string() } else { format!("not stopped: {}", r.error.clone().unwrap_or_default()) };
+        service.log(sybau_core::model::LogLevel::Info, format!("conflicting program {}: {outcome}", r.name));
+    }
+    Ok(results)
+}
+
+#[tauri::command]
+pub async fn factory_reset(service: Svc<'_>, everything: bool) -> CmdResult<Settings> {
+    service.factory_reset(everything).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn check_app_update(service: Svc<'_>) -> CmdResult<Option<AppUpdate>> {
+    service.check_app_update().await.map_err(err)
 }
 
 #[tauri::command]

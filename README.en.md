@@ -28,7 +28,11 @@ The logic is written in **Rust** (Tauri 2), the interface in Svelte. Traffic is 
 - **Multiplexing** (Mux/XUDP) and TLS **fragmentation** (DPI bypass).
 - **Export:** selected servers to JSON, links to the clipboard, a ready core config for any server, a full backup.
 - **Conveniences:** snow-white and dark themes (or follow the system), interface scale, Russian and English (or automatic), country flags, notifications ("Creating the tunnel…" → "Tunnel created · IP …"), start with Windows, auto-connect and server scan at startup, delete confirmation, tray icon with the speed.
-- **Updates from GitHub:** the app updates itself from the releases; Xray, sing-box and geoip/geosite are updated with buttons on the About page.
+- **Streamer mode:** hides server addresses, exit IPs, subscription links and folder paths; asks before opening the journal.
+- **Conflicting programs:** at launch the app finds what may break the connection (Cloudflare WARP, zapret/winws, GoodbyeDPI, other VPNs and proxy clients) and offers to stop them. You can decline.
+- **Factory reset:** settings only, or together with the servers and subscriptions.
+- **Subscription site:** click a subscription to open its page (an `https://` link or the `profile-web-page-url` header).
+- **New versions:** the app does not update itself. At launch it checks the releases on GitHub and shows what changed, with a link to the installer; a version can be skipped. Xray, sing-box and geoip/geosite are updated with buttons on the About page.
 
 ## Installation
 
@@ -51,7 +55,7 @@ pwsh ./scripts/fetch-cores.ps1
 ```
 
 ```bash
-pnpm tauri build --bundles nsis --config src-tauri/tauri.no-updater.conf.json
+pnpm tauri build --bundles nsis
 ```
 
 The installer appears in `target/release/bundle/nsis/`. For development use `pnpm tauri dev`.
@@ -67,7 +71,7 @@ XRAY_BIN=/path/to/xray SINGBOX_BIN=/path/to/sing-box cargo test --workspace
 | Directory | Contents |
 |---|---|
 | `crates/sybau-core` | A pure Rust library: models, link parsing and building, import, subscriptions, Xray and sing-box config generation, pings and batch tests, node monitor, core process control, traffic statistics, journal, core updates. |
-| `src-tauri` | The Tauri shell: commands for the UI, background tasks (packet analysis, subscription updates), tray, WinINET system proxy, restart with administrator rights, autostart, app updates. |
+| `src-tauri` | The Tauri shell: commands for the UI, background tasks (packet analysis, subscription updates), tray, WinINET system proxy, restart with administrator rights, autostart, new version and conflicting program checks. |
 | `ui` | The Svelte 5 + TypeScript interface: Servers, Analytics, Journal, Routing, Subscriptions, Settings and About pages. |
 | `scripts` | Core download, version setting and license collection for CI. |
 

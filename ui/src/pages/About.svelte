@@ -4,9 +4,11 @@
   import Logo from '../components/Logo.svelte';
   import { api } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
+  import { hide } from '../lib/privacy';
   import { app, errorText, toast } from '../lib/store.svelte';
   import type { CoreVersions } from '../lib/types';
-  import { checkForUpdates, installUpdate, updates } from '../lib/updates.svelte';
+  import ReleaseNotesList from '../components/ReleaseNotesList.svelte';
+  import { checkForUpdates, updates } from '../lib/updates.svelte';
 
   const REPO = 'https://github.com/Xtop1337/v2raySYBAU';
   // Shipped unmodified next to the app; full texts in the installed licenses folder.
@@ -55,23 +57,25 @@
     </div>
   </div>
 
-  <div class="card block">
+  <div class="card block" data-testid="about-updates">
     <h2>{t('about.updates')}</h2>
+    <p class="muted note">{t('about.updatesNote')}</p>
+    <div class="row">
+      <button class="btn" disabled={updates.checking} onclick={() => checkForUpdates(false)}>
+        <Icon name="refresh" size={15} />{updates.checking ? t('about.checking') : t('about.checkApp')}
+      </button>
+      {#if updates.error}<span class="error">{updates.error}</span>{/if}
+    </div>
     {#if updates.available}
       <div class="update">
         <b>{t('about.available', { v: updates.available.version })}</b>
-        {#if updates.available.notes}<pre class="notes">{updates.available.notes}</pre>{/if}
-        <button class="btn primary" disabled={updates.progress !== null} onclick={installUpdate}>
-          <Icon name="download" size={15} />
-          {updates.progress !== null ? t('about.installing', { p: updates.progress == null ? '' : `${updates.progress}%` }) : t('about.install')}
-        </button>
-      </div>
-    {:else}
-      <div class="row">
-        <button class="btn" disabled={updates.checking} onclick={() => checkForUpdates(false)}>
-          <Icon name="refresh" size={15} />{updates.checking ? t('about.checking') : t('about.checkApp')}
-        </button>
-        {#if updates.error}<span class="error">{updates.error}</span>{/if}
+        <ReleaseNotesList releases={updates.available.releases} />
+        <div class="row">
+          <button class="btn primary" onclick={() => updates.available && openUrl(updates.available.installerUrl ?? updates.available.pageUrl)}>
+            <Icon name="download" size={15} />{t('update.download')}
+          </button>
+          <button class="btn" onclick={() => updates.available && openUrl(updates.available.pageUrl)}><Icon name="globe" size={15} />{t('about.openRelease')}</button>
+        </div>
       </div>
     {/if}
   </div>
@@ -101,7 +105,7 @@
         </button>
       </div>
     </div>
-    <div class="faint mono dir">{cores?.dir}</div>
+    <div class="faint mono dir">{hide(cores?.dir ?? '')}</div>
   </div>
 
   <div class="card block" data-testid="licenses">
@@ -132,7 +136,7 @@
   <div class="card block">
     <h2>{t('about.dataDir')}</h2>
     <div class="row">
-      <span class="mono faint">{app.dataDir}</span>
+      <span class="mono faint">{hide(app.dataDir)}</span>
       <button class="btn small" onclick={() => api.openDataDir()}><Icon name="folder" size={14} />{t('settings.openDataDir')}</button>
     </div>
   </div>
@@ -169,17 +173,6 @@
     align-items: flex-start;
   }
 
-  .notes {
-    max-height: 200px;
-    overflow: auto;
-    margin: 0;
-    padding: 10px;
-    border-radius: 8px;
-    background: var(--surface-2);
-    white-space: pre-wrap;
-    font-size: 12.5px;
-    width: 100%;
-  }
 
   .cores {
     display: flex;
