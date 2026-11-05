@@ -32,8 +32,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(tray::TrayLanguage::default())
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -96,6 +94,10 @@ pub fn run() {
             commands::export_logs,
             commands::list_processes,
             commands::restart_as_admin,
+            commands::check_app_update,
+            commands::factory_reset,
+            commands::detect_conflicts,
+            commands::stop_conflicts,
             commands::core_versions,
             commands::update_core,
             commands::set_ui_language,

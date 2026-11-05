@@ -80,6 +80,26 @@ pub struct ConnectionCheck {
     pub detail: Option<String>,
 }
 
+/// A newer release of the application with the changes of every version since this one.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUpdate {
+    pub version: String,
+    pub page_url: String,
+    pub installer_url: Option<String>,
+    pub releases: Vec<ReleaseNotes>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseNotes {
+    pub version: String,
+    pub name: String,
+    pub body: String,
+    pub url: String,
+    pub published: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -691,7 +711,7 @@ impl Service {
                 problem: Some(problem),
                 detail: (problem == "error").then_some(text),
             };
-            tray::notify_check(&self.handle, &check);
+            tray::notify_check(&self.handle, &check, settings.general.streamer_mode);
             self.emit("connection-check", check);
         }
         result
@@ -800,7 +820,7 @@ impl Service {
             problem,
             detail,
         };
-        tray::notify_check(&self.handle, &check);
+        tray::notify_check(&self.handle, &check, settings.general.streamer_mode);
         self.emit("connection-check", check);
         Ok(self.connection_info().await)
     }
@@ -997,6 +1017,30 @@ impl Service {
         Ok(new)
     }
 
+    /// Factory reset: default settings (also autostart off); with `everything` the servers,
+    /// subscriptions and node statistics go too. Cores and logs stay.
+    pub async fn factory_reset(&self, everything: bool) -> Result<Settings> {
+        self.cancel_test();
+        self.disconnect().await?;
+        if everything {
+            let mut data = self.data.lock().await;
+            data.profiles.clear();
+            data.subscriptions.clear();
+            self.storage.save_profiles(&data.profiles)?;
+            self.storage.save_subscriptions(&data.subscriptions)?;
+            self.monitor.lock().unwrap().clear();
+        }
+        let settings = self.save_settings(Settings::default()).await?;
+        if everything {
+            self.emit_profiles().await;
+        }
+        self.log(
+            LogLevel::Warning,
+            if everything { "factory reset: settings, servers and subscriptions" } else { "factory reset: settings" },
+        );
+        Ok(settings)
+    }
+
     pub async fn settings(&self) -> Settings {
         self.data.lock().await.settings.clone()
     }
@@ -1125,6 +1169,40 @@ impl Service {
         }
         self.log(LogLevel::Info, format!("{label} updated to {version}"));
         Ok(version)
+    }
+
+    /// Newer releases of the application on GitHub (the app only tells about them; the user
+    /// downloads the installer). Through the active proxy when connected, like core updates.
+    pub async fn check_app_update(&self) -> Result<Option<AppUpdate>> {
+        use sybau_core::updates::{app_releases, http_client, newer_releases};
+        let proxy = self.download_proxy(&*self.conn.lock().await);
+        let client = http_client(proxy.as_deref())?;
+        let prerelease = self.data.lock().await.settings.advanced.update_prerelease;
+        let releases = newer_releases(app_releases(&client).await?, sybau_core::APP_VERSION, prerelease);
+        let Some(latest) = releases.first() else {
+            return Ok(None);
+        };
+        let version = latest.tag_name.trim_start_matches(['v', 'V']).to_string();
+        self.log(LogLevel::Info, format!("a new version is available: {version}"));
+        Ok(Some(AppUpdate {
+            version,
+            page_url: latest.html_url.clone(),
+            installer_url: latest.assets.iter().find(|a| a.name.ends_with("-setup.exe")).map(|a| a.browser_download_url.clone()),
+            releases: releases
+                .iter()
+                .map(|r| ReleaseNotes {
+                    version: r.tag_name.trim_start_matches(['v', 'V']).to_string(),
+                    name: r.name.clone().unwrap_or_default(),
+                    body: r.body.clone().unwrap_or_default(),
+                    url: r.html_url.clone(),
+                    published: r.published_at.clone(),
+                })
+                .collect(),
+        }))
+    }
+
+    pub fn cores_dir(&self) -> PathBuf {
+        self.paths.dir.clone()
     }
 
     pub fn data_dir(&self) -> PathBuf {

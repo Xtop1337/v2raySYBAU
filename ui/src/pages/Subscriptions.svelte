@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { openUrl } from '@tauri-apps/plugin-opener';
   import Icon from '../components/Icon.svelte';
   import Modal from '../components/Modal.svelte';
   import Toggle from '../components/Toggle.svelte';
@@ -6,6 +7,7 @@
   import { ask } from '../lib/dialogs.svelte';
   import { bytes, dateTime, newId } from '../lib/format';
   import { t } from '../lib/i18n.svelte';
+  import { hide } from '../lib/privacy';
   import { app, errorText, toast } from '../lib/store.svelte';
   import type { Subscription } from '../lib/types';
 
@@ -31,6 +33,7 @@
       download: null,
       total: null,
       expire: null,
+      webPageUrl: null,
     };
   }
 
@@ -68,13 +71,25 @@
   }
 
   async function remove(sub: Subscription) {
-    const choice = await ask(t('subs.deleteConfirm', { name: sub.name || sub.url }), [
+    const choice = await ask(t('subs.deleteConfirm', { name: sub.name || hide(sub.url) }), [
       { id: 'cancel', label: t('common.cancel') },
       { id: 'keep', label: t('subs.deleteKeepServers') },
       { id: 'all', label: t('subs.deleteWithServers'), kind: 'danger' },
     ]);
     if (!choice || choice === 'cancel') return;
     await api.deleteSubscription(sub.id, choice === 'all').catch((e) => toast(errorText(e), 'error'));
+  }
+
+  // The provider's page: from the `profile-web-page-url` header, or the http(s) link itself
+  // (panels such as Marzban and Remnawave show the subscription page at that address).
+  function siteOf(sub: Subscription): string | null {
+    if (sub.webPageUrl) return sub.webPageUrl;
+    return /^https?:\/\//i.test(sub.url.trim()) ? sub.url.trim() : null;
+  }
+
+  function openSite(sub: Subscription) {
+    const site = siteOf(sub);
+    if (site) openUrl(site).catch((e) => toast(errorText(e), 'error'));
   }
 
   function serverCount(sub: Subscription) {
@@ -101,8 +116,14 @@
       <div class="card sub" class:off={!sub.enabled}>
         <div class="icon"><Icon name="subscriptions" size={20} /></div>
         <div class="info">
-          <div class="title">{sub.name || sub.url}</div>
-          <div class="faint mono url">{sub.url}</div>
+          {#if siteOf(sub)}
+            <button class="title link" onclick={() => openSite(sub)} title={t('subs.openSite')} data-testid="sub-site">
+              {sub.name || hide(sub.url)}<Icon name="link" size={13} />
+            </button>
+          {:else}
+            <div class="title">{sub.name || hide(sub.url)}</div>
+          {/if}
+          <div class="faint mono url" data-testid="sub-url">{hide(sub.url)}</div>
           <div class="meta muted">
             <span>{t('subs.servers', { n: serverCount(sub) })}</span>
             <span>{t('subs.updated', { when: sub.updatedAt ? dateTime(sub.updatedAt) : t('common.never') })}</span>
@@ -117,6 +138,9 @@
           {#if sub.lastError}<div class="error">{sub.lastError}</div>{/if}
         </div>
         <div class="actions">
+          {#if siteOf(sub)}
+            <button class="btn small icon" onclick={() => openSite(sub)} aria-label={t('subs.openSite')} title={t('subs.openSite')}><Icon name="globe" size={14} /></button>
+          {/if}
           <button class="btn small" disabled={busy[sub.id]} onclick={() => update(sub)}><Icon name="refresh" size={14} />{t('subs.update')}</button>
           <button class="btn small icon" onclick={() => (editing = structuredClone($state.snapshot(sub)) as Subscription)} aria-label="edit"><Icon name="edit" size={14} /></button>
           <button class="btn small icon danger" onclick={() => remove(sub)} aria-label="delete"><Icon name="trash" size={14} /></button>
@@ -197,6 +221,26 @@
 
   .title {
     font-weight: 600;
+  }
+
+  .title.link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    align-self: flex-start;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    font-weight: 600;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .title.link:hover {
+    color: var(--accent);
+    text-decoration: underline;
   }
 
   .url {

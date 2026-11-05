@@ -159,8 +159,13 @@ pub fn notify_connecting(app: &AppHandle, name: &str) {
     notify(app, label(app, "Создаётся туннель…", "Creating the tunnel…"), name);
 }
 
-pub fn notify_check(app: &AppHandle, check: &ConnectionCheck) {
-    let exit = check.exit.as_ref().map(|e| if e.country.is_empty() { e.ip.clone() } else { format!("{} ({})", e.ip, e.country) });
+/// `hide_ip`: streamer mode, the exit address is not shown (only its country).
+pub fn notify_check(app: &AppHandle, check: &ConnectionCheck, hide_ip: bool) {
+    let exit = check.exit.as_ref().map(|e| match (hide_ip, e.country.is_empty()) {
+        (true, _) => format!("•••••• {}", e.country).trim().to_string(),
+        (false, true) => e.ip.clone(),
+        (false, false) => format!("{} ({})", e.ip, e.country),
+    });
     let ru = ru(app);
     let name = &check.profile_name;
     let (title, body) = match (check.problem, ru) {

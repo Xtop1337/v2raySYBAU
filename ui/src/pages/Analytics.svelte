@@ -4,6 +4,7 @@
   import Toggle from '../components/Toggle.svelte';
   import { bytes, delayClass, flag, speed } from '../lib/format';
   import { t } from '../lib/i18n.svelte';
+  import { hide } from '../lib/privacy';
   import { app, saveSettings } from '../lib/store.svelte';
 
   const isActive = (id: string) => app.connection.connected && app.connection.profileId === id;
@@ -20,7 +21,7 @@
   const current = $derived(nodes.find((n) => n.stats.profileId === picked) ?? nodes[0] ?? null);
 
   const fmt = (v: number | null) => (v == null ? '—' : `${Math.round(v)}`);
-  const nameOf = (p: { name: string; address: string } | undefined) => (p ? p.name.replace(/^\s*(?:[\u{1F1E6}-\u{1F1FF}]){2}\s*/u, '') || p.address : '');
+  const nameOf = (p: { name: string; address: string } | undefined) => (p ? p.name.replace(/^\s*(?:[\u{1F1E6}-\u{1F1FF}]){2}\s*/u, '') || hide(p.address) : '');
 </script>
 
 <div class="page">
@@ -102,7 +103,7 @@
             <span class="avatar big">{flag(current.profile?.name ?? '') ?? '·'}</span>
             <div class="detail-title">
               <h2>{nameOf(current.profile)}</h2>
-              <span class="faint">{current.profile?.address}:{current.profile?.port}{#if isActive(stats.profileId)} · {t('analytics.inUse')}{/if}</span>
+              <span class="faint" data-testid="node-address">{hide(`${current.profile?.address}:${current.profile?.port}`)}{#if isActive(stats.profileId)} · {t('analytics.inUse')}{/if}</span>
             </div>
             <span class="now {delayClass(stats.last ?? -1)}">{stats.last == null ? t('servers.timeout') : `${stats.last} ${t('common.ms')}`}</span>
           </div>

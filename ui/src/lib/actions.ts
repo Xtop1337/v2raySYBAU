@@ -3,6 +3,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { api } from './api';
 import { confirm } from './dialogs.svelte';
 import { t } from './i18n.svelte';
+import { hide } from './privacy';
 import { app, errorText, hideConnecting, saveSettings, toast } from './store.svelte';
 import type { ConnectionMode, ImportSummary, Profile, TestMethod, TunEngine } from './types';
 
@@ -141,7 +142,7 @@ export async function deleteProfiles(ids: string[]) {
   if (!ids.length) return;
   if (app.settings?.general.confirmDelete) {
     const one = ids.length === 1 ? app.profiles.find((p) => p.id === ids[0]) : undefined;
-    const message = one ? t('servers.confirmDeleteOne', { name: one.name || one.address }) : t('servers.confirmDelete', { n: ids.length });
+    const message = one ? t('servers.confirmDeleteOne', { name: one.name || hide(one.address) }) : t('servers.confirmDelete', { n: ids.length });
     if (!(await confirm(message, t('common.delete'), t('common.cancel'), true))) return;
   }
   const removed = await api.deleteProfiles(ids).catch((e) => {

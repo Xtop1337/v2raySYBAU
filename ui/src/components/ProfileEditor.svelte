@@ -1,8 +1,10 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
+  import { streamer } from '../lib/privacy';
   import { errorText, toast } from '../lib/store.svelte';
   import type { Profile } from '../lib/types';
+  import Icon from './Icon.svelte';
   import Modal from './Modal.svelte';
   import Toggle from './Toggle.svelte';
 
@@ -48,6 +50,8 @@
       toast(errorText(e), 'error');
     }
   }
+
+  let showAddress = $state(false);
 </script>
 
 <Modal title={isNew ? t('editor.title.new') : t('editor.title.edit')} width={680} {onclose}>
@@ -65,7 +69,18 @@
       </select>
     </label>
     <label><span>{t('editor.group')}</span><input class="input" bind:value={p.group} /></label>
-    <label class="wide"><span>{t('editor.address')}</span><input class="input" bind:value={p.address} placeholder="example.com" /></label>
+    <label class="wide">
+      <span>{t('editor.address')}</span>
+      <!-- Streamer mode: the address stays hidden until explicitly shown. -->
+      <span class="secret">
+        <input class="input" type={streamer() && !showAddress ? 'password' : 'text'} bind:value={p.address} placeholder="example.com" data-testid="editor-address" />
+        {#if streamer()}
+          <button type="button" class="btn small icon" onclick={() => (showAddress = !showAddress)} aria-label={t('editor.showAddress')} title={t('editor.showAddress')}>
+            <Icon name={showAddress ? 'eye-off' : 'eye'} size={14} />
+          </button>
+        {/if}
+      </span>
+    </label>
     <label><span>{t('editor.port')}</span><input class="input" type="number" min="1" max="65535" bind:value={p.port} /></label>
     {#if usesUuid}
       <label class="wide"><span>{t('editor.uuid')}</span><input class="input mono" bind:value={p.uuid} /></label>
@@ -218,6 +233,16 @@
 </Modal>
 
 <style>
+  .secret {
+    display: flex;
+    gap: 6px;
+  }
+
+  .secret input {
+    flex: 1;
+    min-width: 0;
+  }
+
   .grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

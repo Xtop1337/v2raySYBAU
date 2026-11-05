@@ -18,6 +18,7 @@ pub struct FetchedSubscription {
     pub download: Option<u64>,
     pub total: Option<u64>,
     pub expire: Option<i64>,
+    pub web_page_url: Option<String>,
     pub errors: Vec<String>,
 }
 
@@ -38,8 +39,17 @@ pub async fn fetch(url: &str, user_agent: &str, proxy: Option<&str>) -> Result<F
     let userinfo = header("subscription-userinfo");
     let interval = header("profile-update-interval");
     let title = header("profile-title");
+    let web_page = header("profile-web-page-url");
     let body = response.text().await?;
-    Ok(parse_response(&body, userinfo.as_deref(), interval.as_deref(), title.as_deref()))
+    let mut fetched = parse_response(&body, userinfo.as_deref(), interval.as_deref(), title.as_deref());
+    fetched.web_page_url = web_page_url(web_page.as_deref());
+    Ok(fetched)
+}
+
+/// The provider's page (`profile-web-page-url`): only an http(s) link is kept.
+pub fn web_page_url(header: Option<&str>) -> Option<String> {
+    let url = url::Url::parse(header?.trim()).ok()?;
+    matches!(url.scheme(), "http" | "https").then(|| url.to_string())
 }
 
 pub fn parse_response(body: &str, userinfo: Option<&str>, interval: Option<&str>, title: Option<&str>) -> FetchedSubscription {
@@ -103,6 +113,9 @@ pub fn mark_updated(subscription: &mut Subscription, fetched: &FetchedSubscripti
     subscription.download = fetched.download;
     subscription.total = fetched.total;
     subscription.expire = fetched.expire;
+    if fetched.web_page_url.is_some() {
+        subscription.web_page_url = fetched.web_page_url.clone();
+    }
     if subscription.name.trim().is_empty() {
         if let Some(title) = &fetched.title {
             subscription.name = title.clone();
@@ -138,6 +151,14 @@ mod tests {
         assert_eq!((f.upload, f.download, f.total, f.expire), (Some(10), Some(20), Some(1000), Some(1767225600)));
         assert_eq!(f.update_interval_hours, Some(24));
         assert_eq!(f.title.as_deref(), Some("Моя подписка"));
+    }
+
+    #[test]
+    fn web_page_header_only_http_links() {
+        assert_eq!(web_page_url(Some(" https://panel.example.com/sub/abc ")).as_deref(), Some("https://panel.example.com/sub/abc"));
+        assert_eq!(web_page_url(Some("javascript:alert(1)")), None);
+        assert_eq!(web_page_url(Some("not a url")), None);
+        assert_eq!(web_page_url(None), None);
     }
 
     #[test]

@@ -18,6 +18,7 @@
   import { api } from '../lib/api';
   import { delayClass, emptyProfile, flag, flagOfCode, protocolLabel, speed, transportLabel } from '../lib/format';
   import { t } from '../lib/i18n.svelte';
+  import { hide } from '../lib/privacy';
   import { app, errorText, toast } from '../lib/store.svelte';
   import type { Profile, TestMethod } from '../lib/types';
 
@@ -227,13 +228,13 @@
               {app.connection.profileName} · {app.connection.mode === 'tun' ? t('status.mode.tun') : t('status.mode.proxy')}
               ·
               {#if app.check?.exit}
-                <span data-testid="exit-ip">{t('connect.exit', { ip: `${flagOfCode(app.check.exit.country)} ${app.check.exit.ip}`.trim() })}</span>
+                <span data-testid="exit-ip">{t('connect.exit', { ip: `${flagOfCode(app.check.exit.country)} ${hide(app.check.exit.ip)}`.trim() })}</span>
               {:else if !app.check}
                 {t('connect.checking')}
               {/if}
               {#if app.settings?.general.showSpeed}· ↑ {speed(app.traffic.up)} ↓ {speed(app.traffic.down)}{/if}
             {:else}
-              {chosen ? `${chosen.name.match(/[\u{1F1E6}-\u{1F1FF}]{2}/u) ? '' : (flag(chosen.name) ?? '')} ${chosen.name || chosen.address}`.trim() : t('servers.noServerSelected')}
+              {chosen ? `${chosen.name.match(/[\u{1F1E6}-\u{1F1FF}]{2}/u) ? '' : (flag(chosen.name) ?? '')} ${chosen.name || hide(chosen.address)}`.trim() : t('servers.noServerSelected')}
             {/if}
           </div>
         </div>
@@ -432,13 +433,13 @@
             <span class="c-name">
               <span class="avatar" class:flag={flag(p.name)}>{flag(p.name) ?? protocolLabel[p.protocol].slice(0, 1)}</span>
               <span class="name-text">
-                <span class="name">{p.name.replace(/^\s*(?:[\u{1F1E6}-\u{1F1FF}]){2}\s*/u, '') || p.address}</span>
+                <span class="name">{p.name.replace(/^\s*(?:[\u{1F1E6}-\u{1F1FF}]){2}\s*/u, '') || hide(p.address)}</span>
                 {#if app.selectedGroup === 'all' && groups.length > 1}<span class="faint group">{p.group}</span>{/if}
               </span>
               {#if active}<span class="badge accent">●</span>{/if}
             </span>
             <span class="c-proto"><span class="badge">{protocolLabel[p.protocol]}</span></span>
-            <span class="c-addr faint mono">{p.address}:{p.port}</span>
+            <span class="c-addr faint mono" data-testid="addr">{hide(`${p.address}:${p.port}`)}</span>
             <span class="c-transport faint">{transportLabel(p)}</span>
             <span class="c-delay {delayClass(p.delay.ms)}">{delayText(p)}</span>
             <span class="c-loss faint">{stats ? `${stats.loss.toFixed(0)}%` : ''}</span>

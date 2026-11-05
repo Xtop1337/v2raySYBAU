@@ -1,14 +1,18 @@
 <script lang="ts">
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { onMount } from 'svelte';
+  import ConflictsDialog from './components/ConflictsDialog.svelte';
   import Icon from './components/Icon.svelte';
   import Logo from './components/Logo.svelte';
+  import UpdateDialog from './components/UpdateDialog.svelte';
   import { importFiles } from './lib/actions';
-  import { closeDialog, dialog } from './lib/dialogs.svelte';
+  import { checkConflicts } from './lib/conflicts.svelte';
+  import { closeDialog, confirm, dialog } from './lib/dialogs.svelte';
   import { duration, speed } from './lib/format';
   import { t } from './lib/i18n.svelte';
-  import { app, errorText, init, toasts, type Page } from './lib/store.svelte';
-  import { checkForUpdates, updates } from './lib/updates.svelte';
+  import { streamer } from './lib/privacy';
+  import { app, dismissAllToasts, errorText, init, saveSettings, toasts, type Page } from './lib/store.svelte';
+  import { announceUpdate, updates } from './lib/updates.svelte';
   import About from './pages/About.svelte';
   import Analytics from './pages/Analytics.svelte';
   import Journal from './pages/Journal.svelte';
@@ -27,6 +31,32 @@
     { id: 'about', icon: 'about', key: 'nav.about' },
   ];
 
+  // Streamer mode: the journal shows server addresses, so opening it asks first (once per run).
+  let journalAllowed = false;
+
+  async function goTo(page: Page) {
+    if (page === 'journal' && streamer() && !journalAllowed) {
+      if (!(await confirm(t('streamer.journalWarning'), t('streamer.openJournal'), t('common.cancel')))) return;
+      journalAllowed = true;
+    }
+    app.page = page;
+  }
+
+  function toggleStreamer() {
+    if (!app.settings) return;
+    app.settings.general.streamerMode = !app.settings.general.streamerMode;
+    saveSettings(true);
+  }
+
+  // Notifications shown before streamer mode was turned on may carry an IP: drop them (only
+  // when it turns on, not on every later settings change).
+  let streamerWas = false;
+  $effect(() => {
+    const on = app.settings?.general.streamerMode ?? false;
+    if (on && !streamerWas) dismissAllToasts();
+    streamerWas = on;
+  });
+
   let fatal = $state('');
   let dragging = $state(false);
   let now = $state(Date.now());
@@ -43,7 +73,9 @@
             importFiles(event.payload.paths);
           } else dragging = false;
         });
-        if (app.settings?.general.checkUpdates) checkForUpdates(true);
+        // At launch: first the new version (if any), then the programs that may break the connection.
+        if (app.settings?.general.checkUpdates) await announceUpdate();
+        if (app.settings?.general.checkConflicts) await checkConflicts();
       })
       .catch((e) => (fatal = errorText(e)));
     return () => {
@@ -64,7 +96,7 @@
       </div>
       <nav>
         {#each nav as item}
-          <button class="nav-item" class:active={app.page === item.id} onclick={() => (app.page = item.id)}>
+          <button class="nav-item" class:active={app.page === item.id} onclick={() => goTo(item.id)} data-testid="nav-{item.id}">
             <Icon name={item.icon} />
             <span>{t(item.key)}</span>
             {#if item.id === 'about' && updates.available}<span class="new-dot"></span>{/if}
@@ -98,6 +130,16 @@
       {/if}
       {#if app.settings}
         <span class="faint mono">SOCKS {app.settings.proxy.socksPort} · HTTP {app.settings.proxy.httpPort}</span>
+        <button
+          class="streamer"
+          class:on={app.settings.general.streamerMode}
+          onclick={toggleStreamer}
+          title={t('settings.streamerMode')}
+          data-testid="streamer-toggle"
+        >
+          <Icon name={app.settings.general.streamerMode ? 'eye-off' : 'eye'} size={14} />
+          {#if app.settings.general.streamerMode}<span>{t('streamer.on')}</span>{/if}
+        </button>
       {/if}
     </footer>
   </div>
@@ -106,6 +148,9 @@
     <div class="drop"><Icon name="upload" size={34} /><span>{t('servers.dropHint')}</span></div>
   {/if}
 {/if}
+
+<UpdateDialog />
+<ConflictsDialog />
 
 <div class="toasts">
   {#each toasts.list as toast (toast.id)}
@@ -129,6 +174,28 @@
 {/if}
 
 <style>
+  .streamer {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: none;
+    color: var(--text-3);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .streamer:hover {
+    color: var(--text);
+  }
+
+  .streamer.on {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
   .shell {
     display: grid;
     grid-template-columns: 220px 1fr;
@@ -308,7 +375,7 @@
   }
 
   .confirm {
-    width: 420px;
+    width: 460px;
     max-width: calc(100vw - 32px);
     padding: 20px;
     box-shadow: var(--shadow-lg);
@@ -321,6 +388,7 @@
 
   .end {
     justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .danger-fill {

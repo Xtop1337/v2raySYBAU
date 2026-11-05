@@ -82,6 +82,7 @@ export interface Subscription {
   download: number | null;
   total: number | null;
   expire: number | null;
+  webPageUrl: string | null;
 }
 
 export type RuleKind = 'domain' | 'ip' | 'port' | 'process' | 'protocol' | 'network';
@@ -117,6 +118,9 @@ export interface Settings {
     updateSubscriptionsOnStart: boolean;
     checkUpdates: boolean;
     uiScale: number;
+    skippedVersion: string | null;
+    checkConflicts: boolean;
+    streamerMode: boolean;
   };
   proxy: {
     mode: ConnectionMode;
@@ -263,6 +267,38 @@ export interface LogEntry {
   source: LogSource;
   message: string;
   request?: RequestRecord;
+}
+
+export type ConflictKind = 'vpn' | 'dpi' | 'client' | 'core';
+
+export interface Conflict {
+  id: string;
+  name: string;
+  kind: ConflictKind;
+  processes: { pid: number; name: string }[];
+}
+
+export interface StopResult {
+  id: string;
+  name: string;
+  ok: boolean;
+  error: string | null;
+}
+
+export interface ReleaseNotes {
+  version: string;
+  name: string;
+  body: string;
+  url: string;
+  published: string | null;
+}
+
+export interface AppUpdate {
+  version: string;
+  pageUrl: string;
+  installerUrl: string | null;
+  /** Every release newer than the installed version, newest first. */
+  releases: ReleaseNotes[];
 }
 
 export interface CoreVersions {
