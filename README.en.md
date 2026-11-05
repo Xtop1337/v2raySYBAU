@@ -66,21 +66,6 @@ Core tests. With the paths to real cores, every generated config is checked by `
 XRAY_BIN=/path/to/xray SINGBOX_BIN=/path/to/sing-box cargo test --workspace
 ```
 
-## Releases
-
-- Every push runs CI: linters, tests with the real cores and a Windows installer build. The installer is available in the workflow artifacts.
-- To publish a release, push a tag such as `v1.0.1`, or run **Actions → Release → Run workflow** with the version (the "replace" option rebuilds an existing release of the same version). The `release.yml` workflow sets the version, downloads fresh cores, builds the NSIS installer and publishes the release with the license files and the source code of the GPL components. Installed copies see the new release at their next launch.
-
-```bash
-git tag v1.0.1
-```
-
-```bash
-git push origin v1.0.1
-```
-
-- The release description you write on GitHub is what the app shows users as the list of changes: headings, lists, **bold**, `code` and links are supported.
-
 ## Structure
 
 | Directory | Contents |
